@@ -1,0 +1,570 @@
+;;; aperture.el --- Rich per-candidate preview pane for completion -*- lexical-binding: t -*-
+
+;; Copyright (C) 2026 Matt Sawyer
+
+;; Author: Matt Sawyer
+;; Version: 0.1.0
+;; Package-Requires: ((emacs "29.1") (vertico "1.7"))
+;; Keywords: convenience, matching
+;; URL: https://github.com/msawyer/aperture.el
+;; SPDX-License-Identifier: GPL-3.0-or-later
+
+;;; Commentary:
+
+;; `marginalia' annotates each candidate with one line, because the completion
+;; API it implements returns a string appended to the candidate.  That ceiling
+;; is structural.
+;;
+;; aperture adds a second surface: a pane rendering arbitrary, multi-line,
+;; fontified context for the selected candidate, dispatched on the candidate's
+;; completion category, and working for any `completing-read'.
+;;
+;; Layout, and why it is shaped this way:
+;;
+;;     +---------------------------------------+
+;;     |  original buffer - stays visible      |
+;;     +-------------------+-------------------+
+;;     |  candidate list   |  preview pane     |  <- aperture-height
+;;     +-------------------+-------------------+
+;;     |  minibuffer                           |
+;;     +---------------------------------------+
+;;
+;; consult previews into `minibuffer-selected-window'.  Every split therefore
+;; has to leave that window object where we want the pane -- bottom right --
+;; so consult's own preview lands in it with no interception at all.  See
+;; docs/DESIGN.md section 3.4 and 3.5.
+
+;;; Code:
+
+(require 'cl-lib)
+(require 'seq)
+
+(declare-function aperture-vertico-install "aperture-vertico")
+(declare-function aperture-vertico-uninstall "aperture-vertico")
+(defvar consult--preview-function)
+
+(defgroup aperture nil
+  "Rich per-candidate preview pane for completion."
+  :group 'convenience
+  :prefix "aperture-")
+
+;;;; Customization
+
+(defcustom aperture-key 'any
+  "When to update the preview pane.
+
+Grammar deliberately mirrors `consult-preview-key', so that settings
+transfer verbatim:
+
+  nil                     never preview; pane stays closed
+  any                     preview on every selection change
+  KEY                     preview only when KEY is pressed
+  (KEY...)                preview on any of these keys
+  (:debounce SECS any)    preview live, with SECS debounce
+
+Defaults to `any' because the pane is the point of the package; an
+on-demand aperture is not a lighter aperture, it is a worse
+`embark-act'."
+  :type '(choice (const :tag "Any key" any)
+                 (list :tag "Debounced" (const :debounce) (float :tag "Seconds")
+                       (const any))
+                 (const :tag "No preview" nil)
+                 (key :tag "Key")
+                 (repeat :tag "List of keys" key)))
+
+(defcustom aperture-delay 0.15
+  "Idle debounce before rendering a preview, in seconds.
+Ignored for previewers declaring `:cost free'."
+  :type 'number)
+
+(defcustom aperture-height 0.5
+  "Height of the whole aperture area: list and pane together.
+An integer is a number of lines; a float is a fraction of the window
+being split."
+  :type '(choice integer float))
+
+(defcustom aperture-min-top-height 4
+  "Minimum lines left for the original buffer above the aperture area.
+If the frame cannot spare this, the top split is skipped rather than
+producing an unusable sliver."
+  :type 'integer)
+
+(defcustom aperture-side 'right
+  "Which side of the aperture area holds the preview pane."
+  :type '(choice (const right) (const left)))
+
+(defcustom aperture-width 0.5
+  "Width of the preview pane within the aperture area.
+An integer is columns; a float is a fraction."
+  :type '(choice integer float))
+
+(defcustom aperture-partial-size (* 1024 1024)
+  "Files larger than this are previewed partially rather than refused."
+  :type 'natnum)
+
+(defcustom aperture-partial-chunk (* 10 1024)
+  "Bytes read from the head of an oversized file."
+  :type 'natnum)
+
+(defcustom aperture-excluded-files
+  '("\\.gpg\\'" "\\.\\(?:jpe?g\\|png\\|gif\\|pdf\\|zip\\|gz\\|elc\\)\\'")
+  "Regexps matching files that must not be previewed.
+Remote files are excluded separately and unconditionally; a synchronous
+TRAMP read is the one failure mode debouncing cannot rescue."
+  :type '(repeat regexp))
+
+(defcustom aperture-excluded-buffers '("\\` ")
+  "Regexps matching buffer names that must not be previewed."
+  :type '(repeat regexp))
+
+(defcustom aperture-max-count 10
+  "Maximum number of preview buffers kept alive during a session."
+  :type 'natnum)
+
+(defcustom aperture-previewer-registry
+  '((symbol      . aperture-preview-symbol)
+    (function    . aperture-preview-symbol)
+    (variable    . aperture-preview-symbol)
+    (command     . aperture-preview-symbol)
+    (face        . aperture-preview-symbol)
+    (file        . aperture-preview-file)
+    (project-file . aperture-preview-file)
+    (buffer      . aperture-preview-buffer)
+    (kill-ring   . aperture-preview-kill-ring))
+  "Alist mapping completion category to previewer function.
+Mirrors `marginalia-annotator-registry' so it is familiar."
+  :type '(alist :key-type symbol :value-type function))
+
+(defcustom aperture-command-previewers nil
+  "Alist mapping command symbol to previewer function.
+Takes precedence over `aperture-previewer-registry', because the command
+is often more specific than the category."
+  :type '(alist :key-type symbol :value-type function))
+
+(defcustom aperture-consult-categories
+  '(consult-location consult-grep consult-xref consult-compile-error)
+  "Categories where consult drives preview itself.
+aperture opens the pane for these so the geometry is right, then stands
+down and lets consult render into it."
+  :type '(repeat symbol))
+
+(defface aperture-suppressed '((t :inherit shadow))
+  "Face for messages explaining why a preview was suppressed.")
+
+;;;; Session state
+
+(cl-defstruct (aperture--session (:constructor aperture--session-make)
+                                 (:copier nil))
+  pane pane-buffer list-win top-win config
+  (generation 0) timer cancel last-key previewer consult-owned buffers)
+
+(defvar-local aperture--session nil
+  "Active `aperture--session' for this minibuffer, if any.")
+
+(defvar aperture-frontend nil
+  "Plist describing the active completion frontend.
+Keys `:active-p', `:candidate', `:index', each a function of no
+arguments.  Set by `aperture-vertico'.  The core never references
+vertico directly, which keeps it testable with a stub.")
+
+(defun aperture--frontend (key)
+  "Call the frontend function under KEY, or return nil."
+  (when-let* ((fn (plist-get aperture-frontend key)))
+    (funcall fn)))
+
+;;;; Preview key grammar
+
+(defun aperture--key-normalize (spec)
+  "Normalize SPEC into (KEYS . DEBOUNCE).
+KEYS is t for live preview, nil for never, or a list of key strings."
+  (cond
+   ((null spec) (cons nil 0))
+   ((eq spec 'any) (cons t aperture-delay))
+   ((and (consp spec) (eq (car spec) :debounce))
+    (cons (if (memq 'any spec) t (cddr spec)) (cadr spec)))
+   ((stringp spec) (cons (list spec) 0))
+   ((consp spec) (cons spec 0))
+   (t (cons t aperture-delay))))
+
+(defun aperture--live-p ()
+  "Non-nil if the current settings mean preview updates on selection."
+  (eq t (car (aperture--key-normalize aperture-key))))
+
+(defun aperture--cost (fn)
+  "Declared cost of previewer FN: `free', `cheap' or `expensive'."
+  (or (and (symbolp fn) (get fn 'aperture-cost)) 'cheap))
+
+(defun aperture--delay-for (fn)
+  "Debounce delay in seconds for previewer FN."
+  (pcase (aperture--cost fn)
+    ('free 0)
+    ('expensive (* 3 (cdr (aperture--key-normalize aperture-key))))
+    (_ (cdr (aperture--key-normalize aperture-key)))))
+
+;;;; Dispatch
+
+(defun aperture--category ()
+  "Completion category of the active minibuffer, or nil."
+  (when minibuffer-completion-table
+    (ignore-errors
+      (completion-metadata-get
+       (completion-metadata
+        (buffer-substring-no-properties (minibuffer-prompt-end) (point-max))
+        minibuffer-completion-table minibuffer-completion-predicate)
+       'category))))
+
+(defun aperture--previewer-for (category command)
+  "Resolve a previewer for CATEGORY and COMMAND, or nil.
+Command overrides beat the category registry."
+  (or (alist-get command aperture-command-previewers)
+      (alist-get category aperture-previewer-registry)))
+
+(defun aperture--normalize (result)
+  "Canonicalize a previewer RESULT into a plist, or nil.
+
+  nil       -> nil
+  string    -> (:content STRING)
+  plist     -> itself
+  function  -> (:async FUNCTION)"
+  (cond
+   ((null result) nil)
+   ((stringp result) (list :content result))
+   ((and (consp result) (keywordp (car result))) result)
+   ((functionp result) (list :async result))
+   (t (error "Invalid aperture previewer result: %S" result))))
+
+;;;; Guards
+
+(defun aperture--excluded-p (name regexps)
+  "Non-nil if NAME matches any of REGEXPS."
+  (seq-some (lambda (re) (string-match-p re name)) regexps))
+
+(defun aperture-file-guard (file)
+  "Return a suppression message for FILE, or nil if it may be previewed.
+Exposed to previewers so the policy lives in one place."
+  (cond
+   ((file-remote-p file)
+    "Preview suppressed: remote file")
+   ((aperture--excluded-p file aperture-excluded-files)
+    "Preview suppressed: matches `aperture-excluded-files'")
+   ((not (file-readable-p file))
+    "Preview unavailable: not readable")))
+
+(defun aperture-insert-file (file)
+  "Insert FILE into the current buffer, partially if it is large.
+Returns non-nil when the read was truncated."
+  (let* ((size (file-attribute-size (file-attributes file)))
+         (partial (and size (> size aperture-partial-size))))
+    (if partial
+        (insert-file-contents file nil 0 aperture-partial-chunk)
+      (insert-file-contents file))
+    partial))
+
+(defmacro aperture--with-guards (&rest body)
+  "Run BODY with previewing made incapable of prompting or side effects."
+  (declare (indent 0) (debug t))
+  `(let ((non-essential t)
+         (enable-local-variables nil)
+         (enable-dir-local-variables nil)
+         (inhibit-message t)
+         (delay-mode-hooks t))
+     ,@body))
+
+;;;; Rendering
+
+(defun aperture--content-buffer (session)
+  "Return the buffer aperture renders content into for SESSION."
+  (let ((buf (get-buffer-create " *aperture*")))
+    (cl-pushnew buf (aperture--session-buffers session))
+    buf))
+
+(defun aperture--apply-mode (plist)
+  "Apply the `:mode' or `:file' of PLIST to the current buffer."
+  (let ((mode (plist-get plist :mode))
+        (file (plist-get plist :file)))
+    (ignore-errors
+      (cond (mode (funcall mode))
+            (file (let ((buffer-file-name file))
+                    (set-auto-mode)))))
+    (ignore-errors (font-lock-ensure))))
+
+(defun aperture--apply-position (plist window)
+  "Apply `:goto' and `:highlight' from PLIST within WINDOW."
+  (when-let* ((goto (plist-get plist :goto)))
+    (goto-char (point-min))
+    (if (integerp goto) (forward-line (1- goto)) (goto-char goto))
+    (when (window-live-p window)
+      (set-window-point window (point))
+      (with-selected-window window (recenter))))
+  (pcase-dolist (`(,beg . ,end) (plist-get plist :highlight))
+    (let ((ov (make-overlay beg end)))
+      (overlay-put ov 'face 'highlight)
+      (overlay-put ov 'aperture t))))
+
+(defun aperture--render (session plist)
+  "Render normalized PLIST into SESSION's pane."
+  (let ((pane (aperture--session-pane session)))
+    (when (window-live-p pane)
+      (if-let* ((buf (plist-get plist :buffer)))
+          ;; A buffer we did not create.  Display it; never kill it.
+          (when (buffer-live-p buf) (set-window-buffer pane buf))
+        (let ((buf (aperture--content-buffer session)))
+          (with-current-buffer buf
+            (let ((inhibit-read-only t))
+              (erase-buffer)
+              (remove-overlays)
+              (insert (or (plist-get plist :content) ""))
+              (aperture--apply-mode plist)
+              (goto-char (point-min))))
+          (set-window-buffer pane buf)
+          (with-current-buffer buf (aperture--apply-position plist pane))))
+      (when-let* ((title (plist-get plist :title)))
+        (with-current-buffer (window-buffer pane)
+          (setq-local header-line-format title))))))
+
+(defun aperture--render-message (session text)
+  "Render TEXT into SESSION's pane as a suppression notice."
+  (aperture--render session
+                    (list :content (propertize text 'face 'aperture-suppressed))))
+
+;;;; Preview lifecycle
+
+(defun aperture--cancel (session)
+  "Cancel any pending or in-flight preview for SESSION."
+  (when-let* ((timer (aperture--session-timer session)))
+    (cancel-timer timer)
+    (setf (aperture--session-timer session) nil))
+  (when-let* ((cancel (aperture--session-cancel session)))
+    (ignore-errors (funcall cancel))
+    (setf (aperture--session-cancel session) nil)))
+
+(defun aperture--fresh-p (session generation)
+  "Non-nil if GENERATION is still the current request for SESSION."
+  (and (aperture--session-p session)
+       (= generation (aperture--session-generation session))))
+
+(defun aperture--deliver (session generation result)
+  "Render RESULT for SESSION if GENERATION is still current."
+  (when (aperture--fresh-p session generation)
+    (let ((plist (aperture--normalize result)))
+      (cond
+       ((null plist) (aperture--render-message session "No preview"))
+       ((plist-get plist :async)
+        (setf (aperture--session-cancel session) (plist-get plist :cancel))
+        (funcall (plist-get plist :async)
+                 (lambda (res) (aperture--deliver session generation res))))
+       (t (aperture--render session plist))))))
+
+(defun aperture--preview (session cand generation)
+  "Run SESSION's previewer on CAND, honouring GENERATION."
+  (when (aperture--fresh-p session generation)
+    (let ((fn (aperture--session-previewer session)))
+      (condition-case err
+          (aperture--deliver session generation
+                             (aperture--with-guards (funcall fn cand)))
+        (error
+         (aperture--render-message
+          session (format "Preview failed: %s" (error-message-string err))))))))
+
+(defun aperture--schedule (session cand)
+  "Schedule a preview of CAND for SESSION, debounced by cost."
+  (aperture--cancel session)
+  (cl-incf (aperture--session-generation session))
+  (let ((gen (aperture--session-generation session))
+        (delay (aperture--delay-for (aperture--session-previewer session))))
+    (if (<= delay 0)
+        (aperture--preview session cand gen)
+      (setf (aperture--session-timer session)
+            (run-with-idle-timer delay nil #'aperture--preview session cand gen)))))
+
+;;;; Layout
+
+(defun aperture--size (spec total)
+  "Resolve SPEC (integer or fraction) against TOTAL."
+  (if (floatp spec) (round (* total spec)) spec))
+
+(defun aperture--build-layout (session)
+  "Split the original window into the aperture layout for SESSION.
+
+Ordering is load-bearing.  consult previews into
+`minibuffer-selected-window', so that window object must end up as the
+pane.  Splitting `above' leaves it as the bottom strip; splitting toward
+`aperture-side' leaves it on the pane side."
+  (let ((orig (minibuffer-selected-window)))
+    (when (window-live-p orig)
+      (setf (aperture--session-pane session) orig
+            (aperture--session-pane-buffer session) (window-buffer orig)
+            (aperture--session-config session) (current-window-configuration))
+      (condition-case err
+          (let* ((total (window-height orig))
+                 (want (aperture--size aperture-height total)))
+            (when (>= (- total want) aperture-min-top-height)
+              (setf (aperture--session-top-win session)
+                    (split-window orig want 'above)))
+            (setf (aperture--session-list-win session)
+                  (split-window orig
+                                (aperture--size aperture-width (window-width orig))
+                                (if (eq aperture-side 'right) 'left 'right)))
+            t)
+        (error
+         (message "aperture: layout failed, disabling for this session: %S" err)
+         (aperture--restore session)
+         nil)))))
+
+(defun aperture--restore (session)
+  "Undo SESSION's layout.
+Deletes only the windows we created and restores the pane's buffer; this
+is deliberately more surgical than `set-window-configuration', which
+would fight vertico-buffer's own teardown.  The saved configuration is
+kept as a last resort."
+  (condition-case nil
+      (progn
+        (dolist (win (list (aperture--session-list-win session)
+                           (aperture--session-top-win session)))
+          (when (and (window-live-p win) (window-parent win))
+            (delete-window win)))
+        (when (and (window-live-p (aperture--session-pane session))
+                   (buffer-live-p (aperture--session-pane-buffer session)))
+          (set-window-buffer (aperture--session-pane session)
+                             (aperture--session-pane-buffer session))))
+    (error
+     (when-let* ((config (aperture--session-config session)))
+       (ignore-errors (set-window-configuration config))))))
+
+;;;; Session driver
+
+(defun aperture--consult-owns-p ()
+  "Non-nil if consult has installed its own preview in this minibuffer.
+`consult--preview-function' is set exactly when consult owns preview;
+consult itself tests it this way."
+  (and (bound-and-true-p consult--preview-function) t))
+
+(defun aperture--should-activate-p (category command)
+  "Non-nil if aperture should open a pane for CATEGORY and COMMAND."
+  (and aperture-key
+       aperture-frontend
+       (or (aperture--previewer-for category command)
+           (memq category aperture-consult-categories))))
+
+(defun aperture--install-keys ()
+  "Bind aperture's minibuffer keys for this session.
+
+Uses `minor-mode-overriding-map-alist' rather than `use-local-map':
+vertico installs its own local map after we run, and would clobber
+anything set here.  The entry is keyed on `aperture--session', so the
+bindings are live exactly for the duration of a session."
+  (let ((map (make-sparse-keymap))
+        (keys (car (aperture--key-normalize aperture-key))))
+    (keymap-set map "C-M-v" #'aperture-scroll-up)
+    (keymap-set map "C-M-S-v" #'aperture-scroll-down)
+    ;; On-demand mode: the configured keys request a preview.
+    (when (consp keys)
+      (dolist (key keys)
+        (ignore-errors (keymap-set map key #'aperture-preview-now))))
+    (setq-local minor-mode-overriding-map-alist
+                (cons (cons 'aperture--session map)
+                      minor-mode-overriding-map-alist))))
+
+(defun aperture--setup (&rest _)
+  "Open a session if this minibuffer warrants one.
+
+Timing is a two-sided constraint, and `minibuffer-setup-hook' cannot
+satisfy it at any depth:
+
+  - We must run AFTER `minibuffer-completion-table' is set, or
+    `aperture--category' returns nil and nothing ever activates.
+    `completing-read-default' sets that table inside its own
+    `minibuffer-with-setup-hook' lambda, so a negative-depth hook runs
+    too early.
+  - We must run BEFORE vertico-buffer picks a window, or there is no
+    list window to point it at.
+
+`vertico--setup' sits exactly between the two, which is why the frontend
+installs this as `:before' advice there rather than on a hook."
+  (let* ((category (aperture--category))
+         (command this-command))
+    (when (aperture--should-activate-p category command)
+      (let ((session (aperture--session-make
+                      :previewer (aperture--previewer-for category command))))
+        (when (aperture--build-layout session)
+          (setq aperture--session session)
+          (aperture--install-keys)
+          (add-hook 'post-command-hook #'aperture--post-command nil t))))))
+
+(defun aperture--teardown ()
+  "Close the session for this minibuffer."
+  (when-let* ((session aperture--session))
+    (aperture--cancel session)
+    (aperture--restore session)
+    (dolist (buf (aperture--session-buffers session))
+      (when (buffer-live-p buf) (kill-buffer buf)))
+    (setq aperture--session nil)))
+
+(defun aperture--post-command ()
+  "Detect a selection change and schedule a preview."
+  (when-let* ((session aperture--session)
+              ((aperture--frontend :active-p)))
+    ;; consult drives its own preview from its own post-command hook.  Two
+    ;; packages rendering into one window would fight; stand down.
+    (setf (aperture--session-consult-owned session) (aperture--consult-owns-p))
+    (unless (or (aperture--session-consult-owned session)
+                (null (aperture--session-previewer session))
+                (not (aperture--live-p)))
+      (let ((key (cons (aperture--frontend :index)
+                       (buffer-substring-no-properties
+                        (minibuffer-prompt-end) (point-max)))))
+        (unless (equal key (aperture--session-last-key session))
+          (setf (aperture--session-last-key session) key)
+          (when-let* ((cand (aperture--frontend :candidate)))
+            (aperture--schedule session cand)))))))
+
+;;;; Commands
+
+(defun aperture-preview-now ()
+  "Render a preview for the current candidate immediately."
+  (interactive)
+  (when-let* ((session aperture--session)
+              (cand (aperture--frontend :candidate)))
+    (cl-incf (aperture--session-generation session))
+    (aperture--preview session cand (aperture--session-generation session))))
+
+(defun aperture--scroll (lines)
+  "Scroll the pane by LINES without selecting it."
+  (when-let* ((session aperture--session)
+              (win (aperture--session-pane session))
+              ((window-live-p win)))
+    (with-selected-window win
+      (condition-case nil (scroll-up lines) (error nil)))))
+
+(defun aperture-scroll-up ()
+  "Scroll the preview pane down a screenful."
+  (interactive)
+  (aperture--scroll nil))
+
+(defun aperture-scroll-down ()
+  "Scroll the preview pane up a screenful."
+  (interactive)
+  (aperture--scroll '-))
+
+;;;; Mode
+
+;;;###autoload
+(define-minor-mode aperture-mode
+  "Show a rich preview pane beside completion candidates."
+  :global t
+  (if aperture-mode
+      (progn
+        (require 'aperture-previewers)
+        (require 'aperture-vertico)
+        ;; Session start is installed by the frontend, not here: it has to
+        ;; happen at a point only the frontend knows about.  See
+        ;; `aperture-vertico-install'.
+        (aperture-vertico-install)
+        ;; Late, so vertico-buffer restores its own state before we undo ours.
+        (add-hook 'minibuffer-exit-hook #'aperture--teardown 90))
+    (remove-hook 'minibuffer-exit-hook #'aperture--teardown)
+    (when (fboundp 'aperture-vertico-uninstall)
+      (aperture-vertico-uninstall))))
+
+(provide 'aperture)
+;;; aperture.el ends here

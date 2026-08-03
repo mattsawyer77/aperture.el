@@ -1,0 +1,7 @@
+*.elc
+
+# Machine-local agent permission state, not project configuration.
+.claude/settings.local.json
+
+# Machine-local dependency paths for the Makefile.
+local.mk
