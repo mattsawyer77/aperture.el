@@ -168,6 +168,74 @@
   (let ((aperture-excluded-buffers '("\\` ")))
     (should (stringp (aperture-preview-buffer " *hidden*")))))
 
+;;;; Project-file previewer
+
+(defmacro aperture-test--with-project (&rest body)
+  "Run BODY with `root' bound to a project root holding sub/deep.txt.
+`aperture--project-root' is stubbed: resolving a real root needs a VCS or
+projectile, neither of which this suite may depend on."
+  (declare (indent 0) (debug t))
+  `(let* ((root (file-name-as-directory (make-temp-file "aperture-proj" t)))
+          (sub (expand-file-name "sub/" root)))
+     (unwind-protect
+         (progn
+           (make-directory sub)
+           (with-temp-file (expand-file-name "sub/deep.txt" root)
+             (insert "found it"))
+           (cl-letf (((symbol-function 'aperture--project-root) (lambda () root)))
+             ,@body))
+       (delete-directory root t))))
+
+(ert-deftest aperture-test-project-file-resolves-against-the-root ()
+  "Candidates are relative to the project root, not `default-directory'.
+The two coincide only when completion was started from a buffer at the
+root, which is why this looks fine in a flat repository and fails in
+every nested one."
+  (aperture-test--with-project
+    (let* ((default-directory sub)     ; started from a subdirectory
+           (r (aperture-preview-project-file "sub/deep.txt")))
+      (should-not (stringp r))         ; a string here is a guard message
+      (should (equal (plist-get r :content) "found it")))))
+
+(ert-deftest aperture-test-project-file-still-works-from-the-root ()
+  "The case that always worked must keep working."
+  (aperture-test--with-project
+    (let* ((default-directory root)
+           (r (aperture-preview-project-file "sub/deep.txt")))
+      (should (equal (plist-get r :content) "found it")))))
+
+(ert-deftest aperture-test-project-file-accepts-absolute-candidates ()
+  "Project directories are reported under this category too, absolute."
+  (aperture-test--with-project
+    (let* ((default-directory "/")
+           (r (aperture-preview-project-file
+               (expand-file-name "sub/deep.txt" root))))
+      (should (equal (plist-get r :content) "found it")))))
+
+(ert-deftest aperture-test-project-root-falls-back-to-default-directory ()
+  "With no root resolvable, behave exactly as the file previewer does."
+  (let ((file (make-temp-file "aperture-proj-flat")))
+    (unwind-protect
+        (progn
+          (with-temp-file file (insert "flat"))
+          (cl-letf (((symbol-function 'aperture--project-root) #'ignore))
+            (let* ((default-directory (file-name-directory file))
+                   (r (aperture-preview-project-file
+                       (file-name-nondirectory file))))
+              (should (equal (plist-get r :content) "flat")))))
+      (delete-file file))))
+
+(ert-deftest aperture-test-project-prompt-regexp-matches-project-find-file ()
+  "`project-find-file' names the root in its prompt; that beats guessing."
+  (should (string-match aperture--project-prompt-regexp
+                        "Find file in ~/src/thing/: "))
+  (should (equal (match-string 1 "Find file in ~/src/thing/: ") "~/src/thing/"))
+  (should (string-match aperture--project-prompt-regexp "Dired in /tmp/x/: "))
+  ;; projectile prepends the project name, so it must NOT match here -- its
+  ;; own root is consulted instead.
+  (should-not (string-match aperture--project-prompt-regexp
+                            "[my-project] Find file: ")))
+
 ;;;; Package previewer
 
 (ert-deftest aperture-test-package-previewer-finds-a-builtin ()

@@ -24,7 +24,8 @@
 (eval-when-compile
   (require 'package)
   (require 'bookmark)
-  (require 'lisp-mnt))
+  (require 'lisp-mnt)
+  (require 'project))
 
 ;; `eval-when-compile' inlines the struct accessors and declares the registry
 ;; variables, but the compiler still cannot see plain functions at run time.
@@ -37,6 +38,9 @@
 (declare-function bookmark-get-filename "bookmark" (bookmark-name-or-record))
 (declare-function bookmark-get-position "bookmark" (bookmark-name-or-record))
 (declare-function bookmark-get-handler "bookmark" (bookmark-name-or-record))
+(declare-function project-current "project" (&optional maybe-prompt directory))
+(declare-function project-root "project" (project))
+(declare-function projectile-project-root "projectile" (&optional dir))
 
 ;;;; Symbols -- the flagship
 
@@ -101,6 +105,50 @@ rest of the docstring has somewhere to go."
                          (buffer-string))
               :file file
               :title (format " %s" (abbreviate-file-name file))))))))
+
+;;;; Project files
+
+(defconst aperture--project-prompt-regexp
+  "\\`\\(?:Dired\\|Find file\\) in \\(.*\\): \\'"
+  "Matches a `project.el' prompt that names the root in its text.")
+
+(defun aperture--project-root ()
+  "Directory that `project-file' candidates are relative to, or nil.
+
+Runs in the minibuffer, whose `default-directory' is inherited from
+wherever completion was started -- stable for the whole session, and
+unaffected by what the pane is currently showing."
+  (or
+   ;; `project-find-file' names the root in its prompt.  That is the root
+   ;; which produced the candidates, so it outranks any re-derivation.
+   (and (minibufferp)
+        (let ((prompt (or (minibuffer-prompt) ""))
+              case-fold-search)
+          (and (string-match aperture--project-prompt-regexp prompt)
+               (match-string 1 prompt))))
+   ;; projectile has its own notion of a root, and its own candidates were
+   ;; generated from it; when projectile is asking, its answer is the one.
+   (and (fboundp 'projectile-project-root)
+        (ignore-errors (projectile-project-root)))
+   (and (fboundp 'project-current)
+        (when-let* ((proj (ignore-errors (project-current))))
+          (ignore-errors (project-root proj))))))
+
+(defun aperture-preview-project-file (cand)
+  "Preview CAND, a `project-file' candidate, relative to the project root.
+
+`project-file' candidates are relative to the project root; `file'
+candidates are relative to `default-directory'.  The two coincide exactly
+when completion was started from a buffer sitting at the root, which is
+why using the file previewer for both looks correct in a flat repository
+and fails in every nested one.  Absolute candidates occur too -- project
+directories are reported under this category as well."
+  (require 'project nil t)
+  (let ((name (substring-no-properties cand)))
+    (if (file-name-absolute-p name)
+        (aperture-preview-file name)
+      (let ((default-directory (or (aperture--project-root) default-directory)))
+        (aperture-preview-file name)))))
 
 ;;;; Buffers
 

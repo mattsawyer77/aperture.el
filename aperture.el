@@ -130,7 +130,7 @@ TRAMP read is the one failure mode debouncing cannot rescue."
     (command     . aperture-preview-symbol)
     (face        . aperture-preview-symbol)
     (file        . aperture-preview-file)
-    (project-file . aperture-preview-file)
+    (project-file . aperture-preview-project-file)
     (buffer      . aperture-preview-buffer)
     (kill-ring   . aperture-preview-kill-ring)
     (package     . aperture-preview-package)

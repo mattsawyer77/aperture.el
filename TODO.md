@@ -127,9 +127,9 @@ make test         # deliberately needs nothing on the load path
 make try          # interactive smoke test in emacs -Q; needs DEPS
 ```
 
-`DEPS` points at vertico/consult checkouts. Set it in `local.mk` (untracked, already
-present on this machine), or run `make deps`, which writes `.deps.mk` and *appends* — the
-two coexist, and `make deps` never touches `local.mk`.
+`DEPS` points at vertico/consult checkouts. Set it in `local.mk` (untracked), or run
+`make deps`, which writes `.deps.mk` and *appends* — the two coexist, and `make deps` never
+touches `local.mk`.
 
 `make package-lint` needs `make deps` to have run: it wants package-lint itself, and the
 archive contents it validates the dependency declarations against.

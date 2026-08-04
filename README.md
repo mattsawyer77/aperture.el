@@ -83,7 +83,8 @@ Recipes live in [melpa/melpa](https://github.com/melpa/melpa), not here.
 | Category | Shows | Beats the one-line annotation by |
 |---|---|---|
 | `symbol` `function` `variable` `command` `face` | signature, full docstring, current value | the whole docstring instead of its truncated first line |
-| `file` `project-file` | file contents, fontified, bounded | showing the file rather than its size and mode |
+| `file` | file contents, fontified, bounded | showing the file rather than its size and mode |
+| `project-file` | the same, resolved against the project root (`project-find-file`, `projectile-find-file`) | works from any buffer in the project, not only one at the root |
 | `buffer` | the live buffer itself | same |
 | `package` | version, dependencies, homepage, and the package's own `Commentary` | the summary line is rarely enough to decide whether to install |
 | `bookmark` | the target file, centred on the stored position | a name with nothing behind it |

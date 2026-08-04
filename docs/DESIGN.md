@@ -501,6 +501,7 @@ Priority order, roughly by how much they beat the one-line status quo:
 2. `file` / `project-file` — bounded `insert-file-contents` into a scratch buffer plus
    `set-auto-mode` and `font-lock-ensure`. Deliberately **not** `find-file`, to avoid
    triggering `find-file-hook`, LSP clients, and file-local variables on every keystroke.
+   The two categories need **different previewers**, for the reason in §4.3.
 3. `consult-location` (line/grep/imenu) — file content centered on the hit with the match
    highlighted.
 4. `buffer` — display the live buffer directly via `:buffer`.
@@ -562,6 +563,45 @@ One entry is a compromise. `imenu` is the only one a non-consult command can als
 since marginalia classifies plain `M-x imenu` into it; the pane then opens with nothing to
 render. That is the lesser cost — `consult-imenu` previewing into the wrong window is a
 visible defect, an idle pane is not.
+
+### 4.3 `project-file` is not `file` — **fixed**
+
+Reported from real use: `projectile-find-file` showed `Preview unavailable: not readable`
+for every candidate in one repository, and worked perfectly in another.
+
+`project-file` candidates are relative to the **project root**. `file` candidates are
+relative to `default-directory`. aperture had both categories pointing at
+`aperture-preview-file`, which expands against `default-directory` — so a candidate
+`src/config.el`, selected from a buffer in `lib/backend/`, was resolved as
+`lib/backend/src/config.el` and refused by the readability guard.
+
+The two directories coincide exactly when completion was started from a buffer sitting at
+the project root. That is why it looked correct in the aperture repository, where everything
+you would edit is at the top level, and failed in a deeply nested one. **A bug that
+reproduces only in repositories with subdirectories is not a bug anyone would have thought
+to test for**, which is the actual lesson: the flat repository you develop in is not a
+representative sample.
+
+`aperture-preview-project-file` resolves the root and delegates, in this order:
+
+1. **The prompt**, when `project-find-file` or `project-dired` names the root in it. That
+   is the root which *produced* the candidates, so it outranks any re-derivation. The regexp
+   is marginalia's.
+2. **`projectile-project-root`**, when projectile is loaded. projectile has its own notion
+   of a root and generated its own candidates from it; when projectile is asking, its
+   answer is the one that matches.
+3. **`project-current`** / `project-root`.
+4. Failing all of those, `default-directory` — the old behaviour, which is right whenever
+   the root cannot be established.
+
+Absolute candidates are passed straight through: project *directories* are reported under
+this category too.
+
+Root resolution runs in the minibuffer, whose `default-directory` is inherited from wherever
+completion started. That is stable for the session and, importantly, unaffected by whatever
+the pane is currently displaying — the trap `aperture--active-session` documents for
+consult. marginalia resolves the same root the same way, from inside the minibuffer buffer,
+which is good evidence the assumption holds.
 
 ## 5. Configuration surface
 
@@ -695,6 +735,10 @@ being diagnosed, so the log has to be loud precisely where the code is quiet.
   Still owed, and not blocked on anything but a person at a keyboard: the manual
   `consult-ripgrep` check from M2, plus the two new panes (`describe-package`,
   `bookmark-jump`). `dev/try.el` sets all three up.
+
+  **First field report** (`projectile-find-file` unreadable in a nested repository) landed
+  within a day and is fixed: §4.3. It was a real defect in M1's registry, invisible in every
+  repository the package had been developed in.
 
 ## 9. Open questions
 
