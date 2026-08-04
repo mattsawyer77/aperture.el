@@ -134,7 +134,9 @@ TRAMP read is the one failure mode debouncing cannot rescue."
     (file        . aperture-preview-file)
     (project-file . aperture-preview-file)
     (buffer      . aperture-preview-buffer)
-    (kill-ring   . aperture-preview-kill-ring))
+    (kill-ring   . aperture-preview-kill-ring)
+    (package     . aperture-preview-package)
+    (bookmark    . aperture-preview-bookmark))
   "Alist mapping completion category to previewer function.
 Mirrors `marginalia-annotator-registry' so it is familiar."
   :type '(alist :key-type symbol :value-type function))
@@ -146,11 +148,43 @@ is often more specific than the category."
   :type '(alist :key-type symbol :value-type function))
 
 (defcustom aperture-consult-categories
-  '(consult-location consult-grep consult-xref consult-compile-error)
+  '(consult-location consult-grep consult-xref consult-compile-error
+    consult-flymake-error consult-info org-heading imenu multi-category)
   "Categories where consult drives preview itself.
 aperture opens the pane for these so the geometry is right, then stands
-down and lets consult render into it."
+down and lets consult render into it.
+
+Membership is decided by one test: consult passes a `:state' built on
+`consult--jump-preview' for that category, and aperture has no previewer
+of its own.  Categories consult previews but aperture also handles --
+`file', `buffer', `bookmark', `kill-ring' -- do not belong here; those
+activate on their own previewer and hand over at run time instead, which
+is what `aperture--consult-owns-p' is for.
+
+`imenu' is the one entry a non-consult command can also produce: plain
+`\\[imenu]' is classified into it by marginalia.  The pane then opens
+with nothing to render.  That is judged the lesser cost, because
+`consult-imenu' without a pane previews into the wrong window entirely."
   :type '(repeat symbol))
+
+(defcustom aperture-prompt-categories
+  '(("\\<package\\>"  . package)
+    ("\\<bookmark\\>" . bookmark))
+  "Fallback alist of minibuffer prompt regexp to completion category.
+
+Consulted only when the completion table declares no category, and
+matched case-insensitively.  Several built-in commands -- notably
+`describe-package', `package-install' and `bookmark-jump' -- call
+`completing-read' on a bare list of strings, so their metadata carries
+nothing to dispatch on.
+
+marginalia solves this with its own richer classifier, installed as
+`:before-until' advice on `completion-metadata-get'.  Where marginalia is
+active aperture therefore never reaches this variable at all: the advice
+has already answered.  This exists so the previewers below are not dead
+code for everyone who does not run marginalia, and is deliberately
+limited to categories aperture can actually preview."
+  :type '(alist :key-type regexp :value-type symbol))
 
 (defface aperture-suppressed '((t :inherit shadow))
   "Face for messages explaining why a preview was suppressed.")
@@ -295,15 +329,29 @@ KEYS is t for live preview, nil for never, or a list of key strings."
 
 ;;;; Dispatch
 
+(defun aperture--classify-prompt (prompt)
+  "Category PROMPT matches in `aperture-prompt-categories', or nil.
+Matched case-insensitively, as marginalia does."
+  (let ((case-fold-search t))
+    (cl-loop for (re . cat) in aperture-prompt-categories
+             when (string-match-p re prompt) return cat)))
+
+(defun aperture--prompt-category ()
+  "Category guessed from the minibuffer prompt, or nil.
+See `aperture-prompt-categories' for why guessing is necessary at all."
+  (when (minibufferp)
+    (aperture--classify-prompt (or (minibuffer-prompt) ""))))
+
 (defun aperture--category ()
   "Completion category of the active minibuffer, or nil."
   (when minibuffer-completion-table
-    (ignore-errors
-      (completion-metadata-get
-       (completion-metadata
-        (buffer-substring-no-properties (minibuffer-prompt-end) (point-max))
-        minibuffer-completion-table minibuffer-completion-predicate)
-       'category))))
+    (or (ignore-errors
+          (completion-metadata-get
+           (completion-metadata
+            (buffer-substring-no-properties (minibuffer-prompt-end) (point-max))
+            minibuffer-completion-table minibuffer-completion-predicate)
+           'category))
+        (aperture--prompt-category))))
 
 (defun aperture--previewer-for (category command)
   "Resolve a previewer for CATEGORY and COMMAND, or nil.

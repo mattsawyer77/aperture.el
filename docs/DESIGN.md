@@ -495,12 +495,64 @@ Priority order, roughly by how much they beat the one-line status quo:
 3. `consult-location` (line/grep/imenu) — file content centered on the hit with the match
    highlighted.
 4. `buffer` — display the live buffer directly via `:buffer`.
-5. `package` — description, dependencies, README excerpt.
+5. `package` — metadata plus the package's own `Commentary`. **Not** the archive README:
+   `describe-package` fetches that over the network, which a previewer running on every
+   selection change may not do. Resolution reads `package-alist`,
+   `package-archive-contents` and `package--builtins` directly rather than calling
+   `package-get-descriptor`, which runs `package-initialize` as a side effect and still
+   does not cover built-ins — much of what `describe-package` is actually pointed at.
 6. `kill-ring` — the full entry; multi-line kills are unreadable in a one-line annotation.
-7. `bookmark`, `file-name-history`, `minor-mode`.
+7. `bookmark` — the target file, centred on the stored position. A bookmark carrying a
+   `handler` is shown as its raw record instead: resolving it means running that handler,
+   which visits the target for real.
 
 Git/magit previewers (commit diffs) are a good fit for the async path but belong in a
 separate package or a later milestone.
+
+### 4.1 Two categories that do not exist — **the dispatch gap** (shipped)
+
+`package` and `bookmark` were nearly shipped as dead code. `describe-package`,
+`package-install` and `bookmark-jump` all call `completing-read` on a bare list of strings
+and **declare no completion category at all** — confirmed by reading their interactive
+forms. aperture dispatches on category, so neither previewer could ever have fired.
+
+marginalia has the same problem and solves it with `marginalia-classifiers`, installed as
+`:before-until` advice on `completion-metadata-get`. aperture calls that same function, so
+**where marginalia-mode is on, aperture inherits the classification for free** and never
+reaches any fallback of its own. That is worth stating because it is not obvious and it is
+load-bearing: most of aperture's audience runs marginalia, and for them nothing further is
+required.
+
+For everyone else there is `aperture-prompt-categories`, consulted only when the metadata
+gives nothing: two regexps, covering exactly the two categories aperture can preview. It is
+deliberately not a copy of marginalia's eighteen. Duplicating a classifier is a maintenance
+cost; duplicating the two lines of it that make shipped code reachable is not.
+
+Note which previewers were *never* at risk: `symbol` (`read-extended-command` declares
+`command`), `file` (`read-file-name` declares `file`), `buffer`, `kill-ring`. Only the
+categories added in M3 needed this, which is why it did not surface until M3.
+
+### 4.2 Why there is no `imenu` previewer
+
+It would be dead code twice over. `consult-imenu` sets `:category 'imenu` **and** a
+`:state` built on `consult--jump-preview` — consult owns preview there, exactly as it does
+for `consult-location` (deferred in §8 for the same reason). And plain `M-x imenu` resolves
+a candidate name through `imenu--index-alist`, which is buffer-local to the *original*
+buffer and not reachable from the minibuffer where previewers run.
+
+Looking for it surfaced the real defect in the neighbourhood: `imenu` was not in
+`aperture-consult-categories` either, so `consult-imenu` opened **no pane at all** and
+previewed into the plain original window. The same was true of `consult-flymake-error`,
+`consult-info`, `org-heading` and `multi-category` (`consult-buffer`). All five are now
+listed. The membership test is precise: consult passes a jump-preview `:state` for that
+category, *and* aperture has no previewer of its own. Categories consult previews but
+aperture also handles — `file`, `buffer`, `bookmark`, `kill-ring` — stay out, because those
+activate on their own previewer and hand over at run time via `aperture--consult-owns-p`.
+
+One entry is a compromise. `imenu` is the only one a non-consult command can also produce,
+since marginalia classifies plain `M-x imenu` into it; the pane then opens with nothing to
+render. That is the lesser cost — `consult-imenu` previewing into the wrong window is a
+visible defect, an idle pane is not.
 
 ## 5. Configuration surface
 
@@ -515,6 +567,8 @@ aperture-side                          ; 'right (default) | 'left
 aperture-width                         ; pane width as a fraction or columns
 aperture-key                           ; default `any'; grammar mirrors consult-preview-key
 aperture-delay                         ; debounce, default 0.15 (ignored for :cost free)
+aperture-consult-categories            ; open the pane for geometry, let consult render
+aperture-prompt-categories             ; prompt → category fallback; see §4.1
 
 ;; guards — see §3.3a
 aperture-partial-size                  ; 1MB; above this, read a bounded head chunk

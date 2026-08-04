@@ -168,6 +168,119 @@
   (let ((aperture-excluded-buffers '("\\` ")))
     (should (stringp (aperture-preview-buffer " *hidden*")))))
 
+;;;; Package previewer
+
+(ert-deftest aperture-test-package-previewer-finds-a-builtin ()
+  "Built-ins must resolve; `package-get-descriptor' does not return them."
+  (require 'package)
+  (require 'finder-inf nil t)
+  (skip-unless package--builtins)
+  (let ((r (aperture-preview-package "seq")))
+    (should (string-match-p "^seq " (plist-get r :content)))
+    (should (string-match-p "Version" (plist-get r :content)))))
+
+(ert-deftest aperture-test-package-previewer-unknown-package ()
+  (should (null (aperture-preview-package "no-such-package-xyzzy-42"))))
+
+(ert-deftest aperture-test-package-previewer-includes-commentary ()
+  "The Commentary is the part that earns a pane; the summary is marginalia's."
+  (require 'package)
+  (let* ((dir (make-temp-file "aperture-pkg" t))
+         (file (expand-file-name "faux.el" dir)))
+    (unwind-protect
+        (progn
+          (with-temp-file file
+            (insert ";;; faux.el --- x -*- lexical-binding: t -*-\n"
+                    ";;; Commentary:\n;; A distinctive sentence.\n;;; Code:\n"
+                    "(provide 'faux)\n"))
+          (let* ((desc (package-desc-create :name 'faux :version '(1 0)
+                                            :summary "s" :dir dir :kind 'single))
+                 (package-alist (list (list 'faux desc)))
+                 (r (aperture-preview-package "faux")))
+            (should (string-match-p "A distinctive sentence"
+                                    (plist-get r :content)))))
+      (delete-directory dir t))))
+
+(ert-deftest aperture-test-package-commentary-skipped-when-not-installed ()
+  "An uninstalled package's description is a network fetch away.
+A previewer running on every keystroke may not go and get it."
+  (require 'package)
+  (should (null (aperture--package-commentary
+                 (package-desc-create :name 'faux :version '(1 0)
+                                      :summary "s" :kind 'single)))))
+
+;;;; Bookmark previewer
+
+(defmacro aperture-test--with-bookmarks (&rest body)
+  "Run BODY with `bookmark-alist' bound to a fixture and `file' to its target."
+  (declare (indent 0) (debug t))
+  `(let ((file (make-temp-file "aperture-bmk" nil ".el"
+                               "(line 1)\n(line 2)\n(line 3)\n(line 4)\n")))
+     (unwind-protect
+         (let ((bookmark-alist
+                `(("to-line-3" (filename . ,file) (position . 19))
+                  ("handled" (filename . ,file) (position . 1)
+                   (handler . bookmark-jump-noop))
+                  ("no-file" (position . 1) (front-context-string . "x")))))
+           ,@body)
+       (delete-file file))))
+
+(ert-deftest aperture-test-bookmark-previewer-goes-to-the-line ()
+  "A bookmark stores a character position; `:goto' is a line number."
+  (require 'bookmark)
+  (aperture-test--with-bookmarks
+    (let ((r (aperture-preview-bookmark "to-line-3")))
+      (should (= (plist-get r :goto) 3))
+      (should (equal (plist-get r :file) file))
+      (should (string-match-p ":3\\'" (plist-get r :title))))))
+
+(ert-deftest aperture-test-bookmark-previewer-does-not-run-handlers ()
+  "Resolving a handled bookmark means visiting its target for real."
+  (require 'bookmark)
+  (aperture-test--with-bookmarks
+    (let ((r (aperture-preview-bookmark "handled")))
+      (should (null (plist-get r :file)))
+      (should (string-match-p "handler" (plist-get r :content))))))
+
+(ert-deftest aperture-test-bookmark-previewer-without-a-file ()
+  (require 'bookmark)
+  (aperture-test--with-bookmarks
+    (should (string-match-p "front-context-string"
+                            (plist-get (aperture-preview-bookmark "no-file")
+                                       :content)))))
+
+(ert-deftest aperture-test-bookmark-previewer-unknown-bookmark ()
+  (require 'bookmark)
+  (aperture-test--with-bookmarks
+    (should (null (aperture-preview-bookmark "no-such-bookmark")))))
+
+(ert-deftest aperture-test-line-of-position-clamps ()
+  (should (= (aperture--line-of-position "a\nb\nc" 1) 1))
+  (should (= (aperture--line-of-position "a\nb\nc" 5) 3))
+  (should (= (aperture--line-of-position "a\nb\nc" 9999) 3)))
+
+;;;; Category classification
+
+(ert-deftest aperture-test-prompt-classifier ()
+  "`describe-package' and friends declare no category at all.
+Without this fallback the two previewers above can never fire."
+  (should (eq (aperture--classify-prompt "Describe package (default seq): ")
+              'package))
+  (should (eq (aperture--classify-prompt "Install package: ") 'package))
+  (should (eq (aperture--classify-prompt "Jump to bookmark (default x): ")
+              'bookmark))
+  (should (null (aperture--classify-prompt "M-x ")))
+  (should (null (aperture--classify-prompt ""))))
+
+(ert-deftest aperture-test-consult-owned-categories-open-a-pane ()
+  "Each must still open a pane, having no previewer of aperture's own.
+Without a session there is no pane for consult to preview into."
+  (let ((aperture-key 'any)
+        (aperture-frontend '(:active-p ignore)))
+    (dolist (cat '(consult-location consult-grep imenu multi-category
+                                    org-heading consult-flymake-error))
+      (should (null (aperture--skip-reason cat 'some-consult-command))))))
+
 ;;;; Activation decision
 
 (ert-deftest aperture-test-skip-reason-names-the-cause ()

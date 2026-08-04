@@ -16,6 +16,28 @@
 (require 'aperture)
 (require 'help-fns)
 
+;; `package' and `bookmark' are built-in, but each is only reachable once the
+;; user is already completing its own candidates -- by which point the library
+;; is necessarily loaded.  Requiring them lazily keeps `aperture-mode' from
+;; pulling in package.el for a preview that may never be asked for; compiling
+;; against them keeps that free of warnings.
+(eval-when-compile
+  (require 'package)
+  (require 'bookmark)
+  (require 'lisp-mnt))
+
+;; `eval-when-compile' inlines the struct accessors and declares the registry
+;; variables, but the compiler still cannot see plain functions at run time.
+(declare-function package--from-builtin "package" (bi))
+(declare-function package-version-join "package" (vlist))
+(declare-function package-desc-status "package" (pkg-desc))
+(declare-function lm-commentary "lisp-mnt" (&optional file))
+(declare-function bookmark-get-bookmark "bookmark" (bookmark-name-or-record &optional noerror))
+(declare-function bookmark-get-bookmark-record "bookmark" (bookmark-name-or-record))
+(declare-function bookmark-get-filename "bookmark" (bookmark-name-or-record))
+(declare-function bookmark-get-position "bookmark" (bookmark-name-or-record))
+(declare-function bookmark-get-handler "bookmark" (bookmark-name-or-record))
+
 ;;;; Symbols -- the flagship
 
 (defun aperture--symbol-signature (sym)
@@ -103,6 +125,119 @@ Multi-line kills are unreadable in a one-line annotation."
         :title " kill-ring"))
 
 (put 'aperture-preview-kill-ring 'aperture-cost 'free)
+
+;;;; Packages
+
+(defun aperture--package-desc (name)
+  "Return a `package-desc' for the package symbol NAME, or nil.
+
+Reads the three registries directly rather than calling
+`package-get-descriptor', which runs `package-initialize' as a side
+effect -- unacceptable on a keystroke -- and still misses built-ins,
+which are much of what `describe-package' is pointed at."
+  (or (cadr (assq name package-alist))
+      (cadr (assq name package-archive-contents))
+      (when-let* ((builtin (assq name package--builtins)))
+        (package--from-builtin builtin))))
+
+(defun aperture--package-commentary (desc)
+  "Return the Commentary section of DESC's main file, or nil.
+
+Installed packages only.  An uninstalled one has nothing on disk, and its
+long description lives in an archive README that `describe-package' will
+fetch over the network -- which is precisely what a previewer running on
+every selection change must never do."
+  (when-let* ((dir (package-desc-dir desc))
+              ;; `builtin' and `dir' are symbols, not paths.
+              ((stringp dir))
+              (file (expand-file-name
+                     (format "%s.el" (package-desc-name desc)) dir))
+              ((null (aperture-file-guard file)))
+              (size (file-attribute-size (file-attributes file)))
+              ((< size aperture-partial-size)))
+    (ignore-errors (lm-commentary file))))
+
+(defun aperture--package-reqs (desc)
+  "Format DESC's dependencies as one line, or nil if it has none."
+  (when-let* ((reqs (package-desc-reqs desc)))
+    (mapconcat (lambda (req)
+                 (format "%s %s" (car req) (package-version-join (cadr req))))
+               reqs ", ")))
+
+(defun aperture-preview-package (cand)
+  "Preview CAND as a package: metadata, then its Commentary.
+
+The Commentary is the part worth a pane.  `describe-package' shows it in
+full, marginalia shows the one-line summary; between those two there is
+nothing, and the summary is rarely enough to decide whether to install."
+  (require 'package)
+  (require 'lisp-mnt)
+  (when-let* ((name (intern-soft (substring-no-properties cand)))
+              (desc (aperture--package-desc name)))
+    (let ((fields (delq nil
+                        (list (cons "Version" (package-version-join
+                                               (package-desc-version desc)))
+                              (cons "Status" (ignore-errors
+                                               (package-desc-status desc)))
+                              (cons "Archive" (package-desc-archive desc))
+                              (cons "Requires" (aperture--package-reqs desc))
+                              (cons "Homepage" (alist-get
+                                                :url (package-desc-extras desc))))))
+          (summary (package-desc-summary desc)))
+      (list :content
+            (concat (format "%s  --  %s\n" name (or summary "no summary"))
+                    (make-string (max 8 (length (symbol-name name))) ?=) "\n\n"
+                    (mapconcat (lambda (f)
+                                 (format "%-10s %s" (car f) (cdr f)))
+                               (seq-filter #'cdr fields) "\n")
+                    (if-let* ((commentary (aperture--package-commentary desc)))
+                        (concat "\n\n" commentary)
+                      ""))
+            :title (format " %s" name)))))
+
+;;;; Bookmarks
+
+(defun aperture--bookmark-record (bmk)
+  "Format the raw record of BMK for display."
+  (mapconcat (lambda (cell)
+               (format "%-22s %s" (car cell) (aperture--log-abbrev (cdr cell) 120)))
+             (bookmark-get-bookmark-record bmk) "\n"))
+
+(defun aperture--line-of-position (content pos)
+  "Line number of character position POS within CONTENT."
+  (with-temp-buffer
+    (insert content)
+    (goto-char (max (point-min) (min pos (point-max))))
+    (line-number-at-pos)))
+
+(defun aperture-preview-bookmark (cand)
+  "Preview CAND as a bookmark: its target file, centred on the mark.
+
+A bookmark carrying a handler belongs to whichever package created it,
+and the only way to resolve it is to run that handler -- which visits the
+target for real.  Those show their stored record instead, which still
+beats a name with nothing behind it."
+  (require 'bookmark)
+  (when-let* ((name (substring-no-properties cand))
+              (bmk (bookmark-get-bookmark name 'noerror)))
+    (let ((file (bookmark-get-filename bmk))
+          (pos (or (bookmark-get-position bmk) 1))
+          (title (format " %s" name)))
+      (if (or (bookmark-get-handler bmk) (null file))
+          (list :content (aperture--bookmark-record bmk) :title title)
+        (let* ((file (expand-file-name file))
+               (result (aperture-preview-file file)))
+          (cond
+           ;; A guard message; pass it through so it names its own variable.
+           ((stringp result) result)
+           ;; No `:file' means the file previewer produced a directory listing.
+           ((null (plist-get result :file)) (plist-put result :title title))
+           (t
+            (let ((line (aperture--line-of-position
+                         (plist-get result :content) pos)))
+              (plist-put (plist-put result :goto line) :title
+                         (format " %s  --  %s:%d" name
+                                 (abbreviate-file-name file) line))))))))))
 
 (provide 'aperture-previewers)
 ;;; aperture-previewers.el ends here
