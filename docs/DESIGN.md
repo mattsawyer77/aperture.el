@@ -443,9 +443,18 @@ behaviour, and cleanup are identical to what consult does the majority of the ti
   case too — and does it without blowing away the user's layout. A planned option that a
   better fix makes unnecessary is a good trade.
 
-The adapter loads under `with-eval-after-load 'consult`; with consult absent, nothing is
-advised. It has no load-time dependency on consult either, which is what lets the test
-suite — which runs with no `DEPS` at all — cover its decision logic.
+**How the adapter gets loaded.** `aperture--setup` calls `aperture--consult-arrange` on
+every completion session, which installs the advice the first time it finds consult loaded.
+The obvious `with-eval-after-load 'consult` was tried first and is worse than it looks:
+those entries accumulate, are never removed, and outlive `aperture-mode` being turned off —
+so the hook body has to re-check the mode, and enable/disable stop being symmetric. Polling
+costs one `featurep` per session, `require` on a loaded feature is that same test again, and
+`advice-add` will not add the same advice twice. `package-lint` flags `with-eval-after-load`
+in packages; here it was pointing at something real rather than at a style preference.
+
+With consult absent, nothing is advised. The adapter has no load-time dependency on it
+either, which is what lets the test suite — which runs with no `DEPS` at all — cover its
+decision logic.
 
 **Verified with consult loaded**, the real advice on the real function, reproducing the
 arrangement above: preview lands in the pane, and with no session consult's behaviour is

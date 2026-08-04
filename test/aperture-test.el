@@ -382,6 +382,33 @@ Binds `calls' to a list of what the advice did."
 (ert-deftest aperture-test-active-session-is-nil-without-a-minibuffer ()
   (should (null (aperture--active-session))))
 
+(ert-deftest aperture-test-consult-adapter-not-installed-without-consult ()
+  "Invariant 5: nothing about consult may be touched when it is absent.
+This suite runs with no consult on the load path, which is the point."
+  (skip-unless (not (featurep 'consult)))
+  (let (installed)
+    (cl-letf (((symbol-function 'aperture-consult-install)
+               (lambda () (setq installed t))))
+      (aperture--consult-arrange)
+      (should-not installed))))
+
+(ert-deftest aperture-test-consult-adapter-installs-when-consult-appears ()
+  "consult may be loaded long after `aperture-mode'.
+Polling at session setup is what notices; a `with-eval-after-load' hook
+would survive the mode being turned off."
+  (let ((installed 0))
+    (unwind-protect
+        (cl-letf (((symbol-function 'aperture-consult-install)
+                   (lambda () (setq installed (1+ installed)))))
+          ;; The real thing: `features' is not a special variable, so
+          ;; let-binding it under lexical binding is invisible to `featurep'.
+          (provide 'consult)
+          (aperture--consult-arrange)
+          (aperture--consult-arrange)
+          ;; Called every session; `advice-add' makes the repeat harmless.
+          (should (= installed 2)))
+      (setq features (delq 'consult features)))))
+
 ;;;; Logging
 
 (ert-deftest aperture-test-log-is-inert-when-disabled ()

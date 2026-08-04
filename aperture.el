@@ -44,8 +44,6 @@
 (declare-function aperture-consult-install "aperture-consult")
 (declare-function aperture-consult-uninstall "aperture-consult")
 (defvar consult--preview-function)
-;; Defined below by `define-minor-mode', but read above it.
-(defvar aperture-mode)
 
 (defgroup aperture nil
   "Rich per-candidate preview pane for completion."
@@ -660,6 +658,10 @@ satisfy it at any depth:
 
 `vertico--setup' sits exactly between the two, which is why the frontend
 installs this as `:before' advice there rather than on a hook."
+  ;; Cheapest reliable point to notice that consult has since been loaded;
+  ;; see `aperture--consult-arrange'.  Before the skip check, so the adapter
+  ;; is installed even for sessions aperture itself declines.
+  (aperture--consult-arrange)
   (let* ((category (aperture--category))
          (command this-command)
          (reason (aperture--skip-reason category command)))
@@ -739,25 +741,22 @@ installs this as `:before' advice there rather than on a hook."
 
 ;;;; Mode
 
-(defvar aperture--consult-arranged nil
-  "Non-nil once the consult load hook has been registered.")
-
 (defun aperture--consult-arrange ()
-  "Load the consult adapter, now or whenever consult arrives.
+  "Install the consult adapter if consult has been loaded.
 
-consult is a soft dependency, so the adapter cannot simply be required.
-The hook is registered once per Emacs session rather than once per
-`aperture-mode' toggle, since `with-eval-after-load' entries accumulate
-and are never removed; it re-checks `aperture-mode' at load time so
-turning the mode off before consult arrives does not install anything."
-  (if (featurep 'consult)
-      (progn (require 'aperture-consult) (aperture-consult-install))
-    (unless aperture--consult-arranged
-      (setq aperture--consult-arranged t)
-      (with-eval-after-load 'consult
-        (when aperture-mode
-          (require 'aperture-consult)
-          (aperture-consult-install))))))
+consult is a soft dependency, so the adapter cannot simply be required,
+and the obvious `with-eval-after-load' is worse than it looks: those
+entries accumulate, are never removed, and outlive `aperture-mode' being
+turned off -- which forces the hook body to re-check the mode, and leaves
+enable and disable asymmetric.
+
+Polling instead, from `aperture--setup', costs one `featurep' per
+completion session.  `require' on a loaded feature is the same test
+again, and `advice-add' will not add the same advice twice, so calling
+this repeatedly is free and toggling the mode is exactly reversible."
+  (when (featurep 'consult)
+    (require 'aperture-consult)
+    (aperture-consult-install)))
 
 ;;;###autoload
 (define-minor-mode aperture-mode
