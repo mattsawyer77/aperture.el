@@ -381,6 +381,71 @@ chain) is what places the list.
 Anything that resolves this by naming one culprit is solving the wrong problem: the next
 user will have a different one.
 
+### 3.5c Does `aperture-consult.el` need to exist? — **yes, for exactly one reason**
+
+M2 was left open as "create it only if something beyond the ownership check turns up".
+Something did, and it is not what M2 anticipated.
+
+**The defect.** §3.5's "known caveat" — `consult--jump-ensure-buffer` prefers *any* window
+already showing the target buffer — is not an edge case under aperture. Aperture
+**manufactures** a second window showing the original buffer: the top window is a split of
+the pane's window, so both show the same buffer. Sequence during `consult-ripgrep` across
+files:
+
+1. Pane shows B (the original buffer). Top window shows B.
+2. First hit is in file F → pane switches to F. Correct.
+3. Next hit is back in B. `(eq (current-buffer) buf)` now fails, so consult falls to
+   `(get-buffer-window B)` → **the top window** → `select-window`. Preview lands there:
+   point moves, `consult-after-jump-hook` recenters it, the match overlay is drawn in it,
+   and the pane is left showing a stale F.
+
+Confirmed in batch against consult `540ad1e`, reproducing aperture's exact window
+arrangement. Not theoretical.
+
+**Scope of the blast radius.** Every position-preview command routes through this one
+function: `consult--jump-preview` ← `consult--jump-state` ← `consult--location-state`, plus
+`consult-xref`, `consult-compile`, `consult-flymake`, `consult-imenu-multi`,
+`consult-info`, `consult-register`, `consult-org`, `consult-global-mark`. Single-buffer
+commands (`consult-line`, `consult-outline`) escape only because the pane still shows the
+target, so branch 1 short-circuits. The multi-file commands — the ones the pane is most
+useful for — all hit it.
+
+**No fix exists outside consult's internals.** Tested and rejected:
+
+| Attempt | Result |
+|---|---|
+| `set-window-dedicated-p` on the top window | `get-buffer-window` ignores dedication |
+| `no-other-window` parameter | ignored too; it only affects `next-window`/`other-window` |
+| Let-bind `consult--buffer-display` (§3.5's belt-and-braces) | never reached — the offending branch is `select-window`, not `consult--buffer-action` |
+| Don't create the top window | it is the feature; and consult sessions are where it matters most |
+| Show an indirect clone in the top window | works in principle, but puts a second visible buffer in the user's buffer list to fix a window bug |
+
+**The fix.** An `:around` advice on `consult--jump-ensure-buffer`: when an aperture session
+is active and the selected window is its pane, put the target in the pane via
+`consult--buffer-action` and return t; otherwise call through unchanged. Validated in the
+same harness — preview lands in the pane, and with no session the stock behaviour is
+byte-for-byte preserved.
+
+Its safety argument is that it does not invent a path: it forces the branch consult already
+takes for any file not currently visible, so preview-buffer lifecycle, `norecord`
+behaviour, and cleanup are identical to what consult does the majority of the time.
+
+**Therefore `aperture-consult.el` exists, and holds only this.** Explicitly *not* in it:
+
+- `aperture--consult-owns-p` stays in core. The core's decision not to run its own previewer
+  must work when the adapter is not loaded at all — it is a `bound-and-true-p` on a symbol,
+  costing nothing, and moving it would make correctness depend on an optional file.
+- Let-binding `consult--buffer-display` is **dropped**, not deferred. §3.5 kept it as
+  optional insurance; `consult--buffer-action` already runs inside
+  `with-selected-window` on the pane, so it insures nothing.
+- **`aperture-isolate-frame` is retired.** It was §3.5's mitigation for this same caveat.
+  The advice bypasses `get-buffer-window` entirely, which fixes the pre-existing-window
+  case too — and does it without blowing away the user's layout. A planned option that a
+  better fix makes unnecessary is a good trade.
+
+The adapter loads under `with-eval-after-load 'consult`; with consult absent, nothing is
+advised.
+
 ### 3.6 Preview trigger policy — **decided: live by default**
 
 `aperture-key` defaults to `any`: the pane updates as the selection moves.
@@ -542,7 +607,9 @@ being diagnosed, so the log has to be loud precisely where the code is quiet.
 - **M1.5 — `aperture-debug`. DONE.** See §7.1. Taken before M2 because M1 shipped a
   failure mode where "did not activate" and "activated but laid out wrong" were
   indistinguishable from the outside.
-- **M2 — consult.** `aperture-consult.el` implementing whichever approach M0 chose.
+- **M2 — consult.** `aperture-consult.el`. Scope settled in §3.5c: one `:around` advice on
+  `consult--jump-ensure-buffer`, and nothing else. Fixes a confirmed defect in shipped M1
+  behaviour, so it is not optional.
 - **M3 — ship.** Remaining previewers, README, CI, MELPA recipe.
 
 ## 9. Open questions

@@ -48,11 +48,22 @@ what it was built to replace.
 
 ## Next up
 
-### 1. M2 — consult adapter
+### 1. M2 — consult adapter — **scope settled, not yet implemented**
 
-Currently one line in core (`aperture--consult-owns-p` testing
-`consult--preview-function`). Open whether `aperture-consult.el` needs to exist at all;
-create it only if something beyond that check turns up. §3.5.
+`aperture-consult.el` does need to exist, and holds exactly one thing: an `:around` advice
+on `consult--jump-ensure-buffer`. **§3.5c** has the full argument, the batch reproduction,
+and the four alternatives that were tested and rejected.
+
+Short version: aperture manufactures a second window showing the original buffer (the top
+window is a split of the pane), and consult prefers *any* window already showing a preview
+target. So during `consult-ripgrep` across files, hits in the original buffer preview into
+the top window — point moves there, it recenters, the match highlights there — while the
+pane sits stale. This is a real defect in shipped M1 behaviour, not a nicety, and it
+affects every multi-file consult command.
+
+Not in the adapter, and each for a stated reason in §3.5c: `aperture--consult-owns-p`
+stays in core; the `consult--buffer-display` let-binding is dropped as insuring nothing;
+`aperture-isolate-frame` is retired, because this fix subsumes what it was for.
 
 ### 2. M3 — ship
 
