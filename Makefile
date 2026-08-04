@@ -60,9 +60,11 @@ package-lint:
 	  -l package-lint --eval '(setq package-lint-main-file "aperture.el")' \
 	  -f package-lint-batch-and-exit $(SRCS)
 
-# Interactive smoke test in a clean Emacs.  Needs DEPS.
+# Interactive smoke test in a clean Emacs.  Needs DEPS.  $(NEWER) matters most
+# here: this is where a stale .elc would be hardest to spot, since the symptom
+# is a preview behaving like an older revision rather than an error.
 try:
-	@$(EMACS) -nw -Q -L . $(DEPS) -l dev/try.el
+	@$(EMACS) -nw -Q $(NEWER) -L . $(DEPS) -l dev/try.el
 
 clean:
 	@rm -f *.elc test/*.elc
