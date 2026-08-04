@@ -14,10 +14,26 @@ Working notes. The reasoning behind every decision below is in
   default in `make try`. §7.1.
 - **M2 (consult adapter) — done.** One `:around` advice on
   `consult--jump-ensure-buffer`, fixing a confirmed defect in M1 behaviour. §3.5c.
-  39 tests. **One manual check still owed**: `consult-ripgrep` matching in both the
-  current buffer and another file, confirming every hit previews in the pane. Batch
-  cannot reach a live minibuffer; `make try` sets it up.
-- On `main`. No remote yet.
+- **M3 (ship) — done.** `package` and `bookmark` previewers, the dispatch gap they
+  exposed (§4.1), five missing `aperture-consult-categories` entries (§4.2), README, CI,
+  MELPA recipe. 52 tests.
+- On `main`. **No remote yet** — the CI badge and every install snippet in the README
+  point at `github.com/msawyer/aperture.el`, which does not exist. Creating it is the one
+  thing standing between here and a MELPA submission.
+
+## Manual checks owed
+
+Batch cannot reach a live minibuffer, so these are the claims no test covers. `make try`
+sets all three up and says what failure looks like; `aperture-debug` is already on there.
+
+1. **`consult-ripgrep`** matching in both the current buffer and another file — every hit
+   must preview in the pane, not scroll the top window. This is the M2 defect (§3.5c); the
+   mechanism is verified against real consult in batch, the live path is not.
+2. **`describe-package`** — must open a pane at all. `make try` has no marginalia, so this
+   exercises `aperture-prompt-categories` specifically (§4.1). No pane means the fallback
+   is broken, and the log will say `no completion category`.
+3. **`bookmark-jump`** — same, plus the file-and-position rendering. Needs a bookmark to
+   exist first.
 
 ## Invariants — break these and it fails silently
 
@@ -43,11 +59,18 @@ Each of these cost real debugging time. None of them announce themselves when vi
 5. **The core must keep loading without vertico or consult** — and so must
    `aperture-consult.el`, which uses `declare-function` rather than `require`. `make test`
    deliberately passes no `DEPS`; that is what stops it regressing, and it is the only
-   reason the adapter's logic is testable at all.
+   reason the adapter's logic is testable at all. CI runs it that way too.
 6. **The top window shows the same buffer as the pane**, being a split of it. That is what
    makes consult preview into the wrong window without `aperture-consult.el` (§3.5c). Any
    future layout change that puts more windows on screen has to be re-checked against
    `consult--jump-ensure-buffer`, which prefers *any* window already showing the target.
+7. **Registering a previewer does not make it reachable** (§4.1). Plenty of built-in
+   commands call `completing-read` on a bare list and declare no category at all —
+   `describe-package` and `bookmark-jump` among them — so a registry entry for them is dead
+   code. Before adding a previewer, check what the command's completion table actually
+   reports; do not assume a category exists because marginalia annotates the command, since
+   marginalia may be *inferring* it. And check the reverse too: if consult drives preview
+   for that category, the entry belongs in `aperture-consult-categories`, not the registry.
 
 ## Diagnosing anything below
 
@@ -59,10 +82,13 @@ what it was built to replace.
 
 ## Next up
 
-### 1. M3 — ship
+Nothing is blocking. In rough order of value:
 
-Remaining previewers (`package`, `bookmark`, `imenu`), README, CI, MELPA recipe. §8. The
-README's troubleshooting section is one line now: run `M-x aperture-show-log`.
+1. **Create the GitHub remote**, push, confirm CI is green on 29.1 (the declared floor has
+   never actually been compiled against), then submit the MELPA recipe from the README.
+2. **Work the manual checks above.**
+3. Pick off items from "Deferred from M1" as they stop being hypothetical. The async path
+   is the one with real risk: it has never executed.
 
 ## Deferred from M1 — not done, do not mistake for done
 
@@ -94,10 +120,16 @@ Full list in §9. The live ones:
 ## Building
 
 ```
-make compile      # needs DEPS
-make test         # deliberately needs nothing
+make check        # compile + test + lint + package-lint -- exactly what CI runs
+make deps         # install vertico/consult/package-lint into .deps/; needs network
+make compile      # warnings are errors
+make test         # deliberately needs nothing on the load path
 make try          # interactive smoke test in emacs -Q; needs DEPS
 ```
 
 `DEPS` points at vertico/consult checkouts. Set it in `local.mk` (untracked, already
-present on this machine) or pass it on the command line.
+present on this machine), or run `make deps`, which writes `.deps.mk` and *appends* — the
+two coexist, and `make deps` never touches `local.mk`.
+
+`make package-lint` needs `make deps` to have run: it wants package-lint itself, and the
+archive contents it validates the dependency declarations against.

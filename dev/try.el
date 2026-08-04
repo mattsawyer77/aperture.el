@@ -13,6 +13,14 @@
 ;;                       file, then move between them.  Every hit must preview
 ;;                       in the pane.  If a hit in *try aperture* scrolls the
 ;;                       TOP window instead, the adapter is not doing its job.
+;;   M-x describe-package  the §4.1 case.  These two commands declare no
+;;   M-x bookmark-jump     completion category at all, so the pane depends
+;;                         entirely on classification.  marginalia is NOT
+;;                         loaded here, which is the point: this exercises
+;;                         `aperture-prompt-categories', the path marginalia
+;;                         users never reach.  No pane means the fallback is
+;;                         broken; the log will say "no completion category".
+;;                         (bookmark-jump needs a bookmark to exist first.)
 ;;
 ;; Expected layout:
 ;;
@@ -52,6 +60,8 @@
   (insert "  - consult-line previews into the SAME pane\n")
   (insert "  - consult-ripgrep: hits in THIS buffer preview in the pane,\n")
   (insert "    not in the window above it (see the header comment)\n")
+  (insert "  - describe-package opens a pane at all -- no marginalia here,\n")
+  (insert "    so this is testing the prompt-category fallback (§4.1)\n")
   (insert "  - exiting with RET or C-g restores this layout exactly\n\n")
   (insert "Logging is on: M-x aperture-show-log to see what actually happened.\n")
   (goto-char (point-min)))

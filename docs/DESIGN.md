@@ -680,7 +680,21 @@ being diagnosed, so the log has to be loud precisely where the code is quiet.
   `consult--jump-ensure-buffer`, and nothing else. §3.5c. Fixed a confirmed defect in
   shipped M1 behaviour, so it was not optional. 39 tests. Outstanding: the manual
   `consult-ripgrep` confirmation batch cannot perform.
-- **M3 — ship.** Remaining previewers, README, CI, MELPA recipe.
+- **M3 — ship. DONE.** `package` and `bookmark` previewers (§4), the dispatch gap they
+  exposed (§4.1), five missing entries in `aperture-consult-categories` (§4.2), README, CI,
+  MELPA recipe. 52 tests.
+
+  No `imenu` previewer — §4.2 for why not, which is the more useful finding.
+
+  CI runs the same `make` targets a developer runs, via a generated `.deps.mk`. Two claims
+  §6 had been making without evidence are now checked: `byte-compile-error-on-warn` (batch
+  byte-compilation exits 0 on warnings, so "clean compile" was unverified) and
+  `package-lint`, which had never been run at all. It was clean but for one warning, and
+  that warning was correct — see the `with-eval-after-load` note in §3.5c.
+
+  Still owed, and not blocked on anything but a person at a keyboard: the manual
+  `consult-ripgrep` check from M2, plus the two new panes (`describe-package`,
+  `bookmark-jump`). `dev/try.el` sets all three up.
 
 ## 9. Open questions
 
