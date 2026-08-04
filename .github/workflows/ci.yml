@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  check:
+    name: Emacs ${{ matrix.emacs_version }}
+    runs-on: ubuntu-latest
+    # snapshot breaking is news about Emacs, not about this branch.
+    continue-on-error: ${{ matrix.experimental }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # 29.1 is the floor declared in Package-Requires; test the floor, or
+        # the declaration is a guess.
+        emacs_version: ['29.1', '29.4', '30.1']
+        experimental: [false]
+        include:
+          - emacs_version: snapshot
+            experimental: true
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: purcell/setup-emacs@master
+        with:
+          version: ${{ matrix.emacs_version }}
+
+      - name: Install dependencies
+        # Writes .deps.mk, which the Makefile includes.  Every step below is a
+        # target a developer runs unchanged; `make check' runs all four at once.
+        run: make deps
+
+      - name: Byte-compile
+        # byte-compile-error-on-warn: batch-byte-compile exits 0 on warnings,
+        # so without it a warning would pass CI silently.
+        run: make compile
+
+      - name: Tests
+        # Deliberately no dependencies on the load path.  The core and the
+        # consult adapter must both load without vertico or consult present;
+        # this step is what stops that regressing.  TODO.md, invariant 5.
+        run: make test
+
+      - name: checkdoc
+        run: make lint
+
+      - name: package-lint
+        run: make package-lint
