@@ -97,7 +97,7 @@ buffer it did not create."
 ;;;; Kill ring
 
 (defun aperture-preview-kill-ring (cand)
-  "Preview CAND as a kill-ring entry.
+  "Preview CAND as an entry from the `kill-ring'.
 Multi-line kills are unreadable in a one-line annotation."
   (list :content (substring-no-properties cand)
         :title " kill-ring"))

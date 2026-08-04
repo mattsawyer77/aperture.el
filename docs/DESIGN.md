@@ -451,6 +451,8 @@ aperture-partial-chunk                 ; 10KB
 aperture-excluded-files                ; regexps; remote + gpg by default
 aperture-excluded-buffers
 aperture-max-count                     ; live preview buffer cap
+
+aperture-debug                         ; log to *aperture-log*; see §7.1
 ```
 
 Naming deliberately shadows consult's (`consult-preview-partial-size`,
@@ -487,6 +489,38 @@ logic *out* of the interactive layer specifically so it can be tested.
 Tests will be written to pass. (The prior art's test suite asserted that "elderberry"
 contains the letter `a`, and had never been run.)
 
+### 7.1 Diagnosis: `aperture-debug`
+
+Everything above covers what can be asserted in batch. What it cannot cover is the class of
+bug M1 actually shipped: **a session that never activated and a session that activated but
+laid its windows out wrong present identically** — the preview is not where you expected,
+with no error, no message, and nothing in `*Messages*`. Diagnosing one instance of that
+cost several round trips of instrumenting a live Emacs by hand. That is a design defect in
+the package, not bad luck, and the fix belongs in the package.
+
+`aperture-debug` writes to `*aperture-log*`. Lines are timestamped and tagged with
+`minibuffer-depth`, so recursive sessions stay separable. It records exactly the decision
+points where aperture can silently do nothing:
+
+| Line | Answers |
+|---|---|
+| `setup … no session: REASON` | Did a session start, and if not, *which* of the ways to decline was taken — `aperture-key` nil, no frontend, unknown category, no category at all |
+| `setup … previewer=` | Which previewer the registry resolved, or that the category is consult-owned |
+| `layout pane= list= top=` | Where the three windows actually landed, with dimensions |
+| `layout top split skipped` | The frame was too short for `aperture-min-top-height` — a silent geometry change |
+| `list placed in` / `list not placed` | Whether the `display-buffer-overriding-action` interception fired (§3.5b) |
+| `consult took/released preview` | Ownership transitions, logged on change only |
+| `sched` / `run` / `render` / `drop … superseded` | Each dispatch with its generation, so debounce and staleness are visible rather than inferred |
+
+Two properties worth preserving. It is **inert when off** — no buffer is created, nothing is
+formatted; there is a test asserting exactly that, because a debug facility that costs
+something when disabled gets disabled permanently. And `aperture-show-log` **turns logging
+on** before displaying the buffer, so the instruction in a bug report is one command rather
+than a customize step plus a buffer name.
+
+The negative lines matter more than the positive ones. "Nothing happened" is the failure
+being diagnosed, so the log has to be loud precisely where the code is quiet.
+
 ## 8. Milestones
 
 - **M0 — spike. DONE.** See §3.5a. All four questions confirmed on hardware. The
@@ -505,8 +539,9 @@ contains the letter `a`, and had never been run.)
     reused; matters once a previewer returns `:buffer` for files.
   - The async path (`:async` / `:cancel`) is wired with generation checks but no shipped
     previewer uses it, so that code has never executed.
-  - `aperture-debug`. M1 shipped a failure mode where "did not activate" and "activated
-    but laid out wrong" were indistinguishable from the outside. Do this before M2.
+- **M1.5 — `aperture-debug`. DONE.** See §7.1. Taken before M2 because M1 shipped a
+  failure mode where "did not activate" and "activated but laid out wrong" were
+  indistinguishable from the outside.
 - **M2 — consult.** `aperture-consult.el` implementing whichever approach M0 chose.
 - **M3 — ship.** Remaining previewers, README, CI, MELPA recipe.
 

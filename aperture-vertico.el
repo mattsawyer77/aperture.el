@@ -56,7 +56,12 @@ regardless of what else the user's config is doing."
              (list (lambda (buffer _alist)
                      (set-window-buffer win buffer)
                      win))))
-        (apply fn args))
+        (apply fn args)
+        (aperture--log "list   placed in %s" (aperture--log-window win)))
+    ;; Without a session this is stock vertico-buffer, which is why a
+    ;; misplaced list and a session that never started look the same.
+    (aperture--log "list   not placed: %s"
+                   (if aperture--session "no live list window" "no session"))
     (apply fn args)))
 
 ;;;###autoload

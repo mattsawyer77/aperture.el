@@ -25,6 +25,11 @@
 (require 'consult nil t)
 (require 'aperture)
 
+;; On, so that anything surprising is already recorded by the time you go
+;; looking.  Set before `aperture-mode' so the mode's own marker line lands in
+;; the log too.
+(setq aperture-debug t)
+
 (vertico-mode 1)
 (aperture-mode 1)
 
@@ -40,7 +45,8 @@
   (insert "  - candidate list left, preview pane right\n")
   (insert "  - M-x shows whole docstrings, updating instantly (cost `free')\n")
   (insert "  - consult-line previews into the SAME pane\n")
-  (insert "  - exiting with RET or C-g restores this layout exactly\n")
+  (insert "  - exiting with RET or C-g restores this layout exactly\n\n")
+  (insert "Logging is on: M-x aperture-show-log to see what actually happened.\n")
   (goto-char (point-min)))
 (switch-to-buffer "*try aperture*")
 

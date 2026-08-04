@@ -10,7 +10,9 @@ Working notes. The reasoning behind every decision below is in
 - **M1 (core) — done.** Registry, dispatch, staleness, debounce, guards, layout, session
   lifecycle, keymap, four previewers. 27 tests, clean byte-compile, working on hardware.
   §8.
-- Initial commit `68c8d6f` on `main`. No remote yet.
+- **M1.5 (`aperture-debug`) — done.** `*aperture-log*`, `M-x aperture-show-log`, on by
+  default in `make try`. 33 tests. §7.1.
+- On `main`. No remote yet.
 
 ## Invariants — break these and it fails silently
 
@@ -36,25 +38,26 @@ Each of these cost real debugging time. None of them announce themselves when vi
 5. **The core must keep loading without vertico or consult.** `make test` deliberately
    passes no `DEPS`; that is what stops it regressing.
 
+## Diagnosing anything below
+
+Set `aperture-debug` (or just `M-x aperture-show-log`, which turns it on) before
+reproducing. §7.1. The log is loudest exactly where the code is silent: which reason a
+session declined to start, where the three windows landed, whether the list interception
+fired, when consult took ownership. Reach for it before instrumenting by hand — that is
+what it was built to replace.
+
 ## Next up
 
-### 1. `aperture-debug` — do this before M2
-
-M1 shipped a failure mode where "did not activate" and "activated but laid out wrong" were
-indistinguishable from the outside, which cost several round trips to diagnose. Wanted: an
-opt-in log of session start (category, command, resolved previewer, activate decision),
-layout results (pane/list/top windows), consult ownership, and each preview dispatch with
-its generation. Roughly what the M0 spike's log did.
-
-### 2. M2 — consult adapter
+### 1. M2 — consult adapter
 
 Currently one line in core (`aperture--consult-owns-p` testing
 `consult--preview-function`). Open whether `aperture-consult.el` needs to exist at all;
 create it only if something beyond that check turns up. §3.5.
 
-### 3. M3 — ship
+### 2. M3 — ship
 
-Remaining previewers (`package`, `bookmark`, `imenu`), README, CI, MELPA recipe. §8.
+Remaining previewers (`package`, `bookmark`, `imenu`), README, CI, MELPA recipe. §8. The
+README's troubleshooting section is one line now: run `M-x aperture-show-log`.
 
 ## Deferred from M1 — not done, do not mistake for done
 
@@ -66,7 +69,8 @@ Remaining previewers (`package`, `bookmark`, `imenu`), README, CI, MELPA recipe.
   reused; matters once a previewer returns `:buffer` for files.
 - **Async path** (`:async` / `:cancel`) — wired through `aperture--deliver` with generation
   checks, but no shipped previewer uses it, so that code has never executed. First async
-  previewer should be treated as also testing this machinery.
+  previewer should be treated as also testing this machinery; the `async gen=N dispatched`
+  and `drop gen=N superseded` log lines exist for exactly that.
 - **On-demand `aperture-key`** — the `KEY` / `(KEY...)` forms parse and bind
   `aperture-preview-now`, but this path has not been exercised interactively.
 
@@ -79,7 +83,8 @@ Full list in §9. The live ones:
 2. Does `display-buffer-overriding-action` hold up across configs that break a plain
    action? It wins by Emacs' precedence rules and worked where a plain action did not, but
    has only been tried on a handful of setups. Wants more evidence before the README
-   promises anything.
+   promises anything — and the evidence is now collectable, since a config that defeats it
+   logs `list not placed` rather than looking like a session that never started.
 
 ## Building
 

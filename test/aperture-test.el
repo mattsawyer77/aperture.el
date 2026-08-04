@@ -6,9 +6,9 @@
 
 ;; The interactive layer is hard to test in batch, so the design pushes logic
 ;; out of it specifically so it can be tested here: result normalization,
-;; registry resolution order, the preview-key grammar, cost/debounce, and the
-;; guards.  Layout and frontend behaviour are covered by spike/aperture-spike.el
-;; against a real Emacs.
+;; registry resolution order, the preview-key grammar, cost/debounce, the
+;; guards, and the activation decision.  Layout and frontend behaviour need a
+;; real frame; use `make try', with `aperture-debug' on.
 
 ;;; Code:
 
@@ -164,6 +164,59 @@
 (ert-deftest aperture-test-buffer-previewer-respects-exclusions ()
   (let ((aperture-excluded-buffers '("\\` ")))
     (should (stringp (aperture-preview-buffer " *hidden*")))))
+
+;;;; Activation decision
+
+(ert-deftest aperture-test-skip-reason-names-the-cause ()
+  "Each way of doing nothing must be distinguishable in the log."
+  (let ((aperture-frontend '(:active-p ignore))
+        (aperture-previewer-registry '((file . aperture-preview-file)))
+        (aperture-command-previewers nil)
+        (aperture-consult-categories '(consult-location)))
+    (should (string-match-p "aperture-key"
+                            (let ((aperture-key nil))
+                              (aperture--skip-reason 'file 'find-file))))
+    (should (string-match-p "frontend"
+                            (let ((aperture-key 'any) (aperture-frontend nil))
+                              (aperture--skip-reason 'file 'find-file))))
+    (let ((aperture-key 'any))
+      (should (string-match-p "no completion category"
+                              (aperture--skip-reason nil 'some-command)))
+      (should (string-match-p "buffer" (aperture--skip-reason 'buffer 'x)))
+      ;; A consult-owned category activates for the geometry alone, with no
+      ;; previewer of our own.
+      (should (null (aperture--skip-reason 'consult-location 'consult-line)))
+      (should (null (aperture--skip-reason 'file 'find-file))))))
+
+;;;; Logging
+
+(ert-deftest aperture-test-log-is-inert-when-disabled ()
+  "Logging must cost nothing, and create nothing, when off."
+  (when-let* ((buf (get-buffer aperture-log-buffer))) (kill-buffer buf))
+  (let ((aperture-debug nil))
+    (aperture--log "should not appear")
+    (should (null (get-buffer aperture-log-buffer)))))
+
+(ert-deftest aperture-test-log-records-when-enabled ()
+  (when-let* ((buf (get-buffer aperture-log-buffer))) (kill-buffer buf))
+  (unwind-protect
+      (let ((aperture-debug t))
+        (aperture--log "hello %s" 'world)
+        (with-current-buffer aperture-log-buffer
+          (should (string-match-p "hello world" (buffer-string)))))
+    (when-let* ((buf (get-buffer aperture-log-buffer))) (kill-buffer buf))))
+
+(ert-deftest aperture-test-log-abbrev-keeps-one-line ()
+  "Candidates arrive propertized and may span lines; a log line may not."
+  (should (equal (aperture--log-abbrev (propertize "a\nb" 'face 'bold)) "a\\nb"))
+  (should (equal (aperture--log-abbrev "abcdef" 3) "abc...")))
+
+(ert-deftest aperture-test-log-window-tolerates-dead-window ()
+  (should (equal (aperture--log-window nil) "none")))
+
+(ert-deftest aperture-test-log-result-distinguishes-kinds ()
+  (should (string-match-p "buffer=" (aperture--log-result '(:buffer "x"))))
+  (should (string-match-p "content=2 chars" (aperture--log-result '(:content "hi")))))
 
 (provide 'aperture-test)
 ;;; aperture-test.el ends here
