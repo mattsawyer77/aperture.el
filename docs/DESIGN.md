@@ -381,7 +381,7 @@ chain) is what places the list.
 Anything that resolves this by naming one culprit is solving the wrong problem: the next
 user will have a different one.
 
-### 3.5c Does `aperture-consult.el` need to exist? — **yes, for exactly one reason**
+### 3.5c Does `aperture-consult.el` need to exist? — **yes, for exactly one reason** (shipped)
 
 M2 was left open as "create it only if something beyond the ownership check turns up".
 Something did, and it is not what M2 anticipated.
@@ -444,7 +444,13 @@ behaviour, and cleanup are identical to what consult does the majority of the ti
   better fix makes unnecessary is a good trade.
 
 The adapter loads under `with-eval-after-load 'consult`; with consult absent, nothing is
-advised.
+advised. It has no load-time dependency on consult either, which is what lets the test
+suite — which runs with no `DEPS` at all — cover its decision logic.
+
+**Verified with consult loaded**, the real advice on the real function, reproducing the
+arrangement above: preview lands in the pane, and with no session consult's behaviour is
+unchanged. What batch cannot reach is a live minibuffer, so the end-to-end symptom during
+an actual `consult-ripgrep` is a manual check — see `dev/try.el`.
 
 ### 3.6 Preview trigger policy — **decided: live by default**
 
@@ -607,9 +613,10 @@ being diagnosed, so the log has to be loud precisely where the code is quiet.
 - **M1.5 — `aperture-debug`. DONE.** See §7.1. Taken before M2 because M1 shipped a
   failure mode where "did not activate" and "activated but laid out wrong" were
   indistinguishable from the outside.
-- **M2 — consult.** `aperture-consult.el`. Scope settled in §3.5c: one `:around` advice on
-  `consult--jump-ensure-buffer`, and nothing else. Fixes a confirmed defect in shipped M1
-  behaviour, so it is not optional.
+- **M2 — consult. DONE.** `aperture-consult.el`: one `:around` advice on
+  `consult--jump-ensure-buffer`, and nothing else. §3.5c. Fixed a confirmed defect in
+  shipped M1 behaviour, so it was not optional. 39 tests. Outstanding: the manual
+  `consult-ripgrep` confirmation batch cannot perform.
 - **M3 — ship.** Remaining previewers, README, CI, MELPA recipe.
 
 ## 9. Open questions

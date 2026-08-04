@@ -19,7 +19,7 @@ NEWER := --eval '(setq load-prefer-newer t)'
 
 BATCH := $(EMACS) -Q --batch $(NEWER) -L . -L test $(DEPS)
 
-SRCS := aperture.el aperture-previewers.el aperture-vertico.el
+SRCS := aperture.el aperture-previewers.el aperture-vertico.el aperture-consult.el
 
 .PHONY: all compile test lint clean try
 

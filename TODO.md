@@ -11,7 +11,12 @@ Working notes. The reasoning behind every decision below is in
   lifecycle, keymap, four previewers. 27 tests, clean byte-compile, working on hardware.
   §8.
 - **M1.5 (`aperture-debug`) — done.** `*aperture-log*`, `M-x aperture-show-log`, on by
-  default in `make try`. 33 tests. §7.1.
+  default in `make try`. §7.1.
+- **M2 (consult adapter) — done.** One `:around` advice on
+  `consult--jump-ensure-buffer`, fixing a confirmed defect in M1 behaviour. §3.5c.
+  39 tests. **One manual check still owed**: `consult-ripgrep` matching in both the
+  current buffer and another file, confirming every hit previews in the pane. Batch
+  cannot reach a live minibuffer; `make try` sets it up.
 - On `main`. No remote yet.
 
 ## Invariants — break these and it fails silently
@@ -35,8 +40,14 @@ Each of these cost real debugging time. None of them announce themselves when vi
 4. **`vertico--index` cannot test whether vertico is active.** It is `defvar-local` with a
    default of -1, which is non-nil. Use `vertico--input`, as vertico's own
    `vertico--command-p` does. See `aperture-vertico--active-p`.
-5. **The core must keep loading without vertico or consult.** `make test` deliberately
-   passes no `DEPS`; that is what stops it regressing.
+5. **The core must keep loading without vertico or consult** — and so must
+   `aperture-consult.el`, which uses `declare-function` rather than `require`. `make test`
+   deliberately passes no `DEPS`; that is what stops it regressing, and it is the only
+   reason the adapter's logic is testable at all.
+6. **The top window shows the same buffer as the pane**, being a split of it. That is what
+   makes consult preview into the wrong window without `aperture-consult.el` (§3.5c). Any
+   future layout change that puts more windows on screen has to be re-checked against
+   `consult--jump-ensure-buffer`, which prefers *any* window already showing the target.
 
 ## Diagnosing anything below
 
@@ -48,24 +59,7 @@ what it was built to replace.
 
 ## Next up
 
-### 1. M2 — consult adapter — **scope settled, not yet implemented**
-
-`aperture-consult.el` does need to exist, and holds exactly one thing: an `:around` advice
-on `consult--jump-ensure-buffer`. **§3.5c** has the full argument, the batch reproduction,
-and the four alternatives that were tested and rejected.
-
-Short version: aperture manufactures a second window showing the original buffer (the top
-window is a split of the pane), and consult prefers *any* window already showing a preview
-target. So during `consult-ripgrep` across files, hits in the original buffer preview into
-the top window — point moves there, it recenters, the match highlights there — while the
-pane sits stale. This is a real defect in shipped M1 behaviour, not a nicety, and it
-affects every multi-file consult command.
-
-Not in the adapter, and each for a stated reason in §3.5c: `aperture--consult-owns-p`
-stays in core; the `consult--buffer-display` let-binding is dropped as insuring nothing;
-`aperture-isolate-frame` is retired, because this fix subsumes what it was for.
-
-### 2. M3 — ship
+### 1. M3 — ship
 
 Remaining previewers (`package`, `bookmark`, `imenu`), README, CI, MELPA recipe. §8. The
 README's troubleshooting section is one line now: run `M-x aperture-show-log`.

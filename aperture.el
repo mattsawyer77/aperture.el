@@ -41,7 +41,11 @@
 
 (declare-function aperture-vertico-install "aperture-vertico")
 (declare-function aperture-vertico-uninstall "aperture-vertico")
+(declare-function aperture-consult-install "aperture-consult")
+(declare-function aperture-consult-uninstall "aperture-consult")
 (defvar consult--preview-function)
+;; Defined below by `define-minor-mode', but read above it.
+(defvar aperture-mode)
 
 (defgroup aperture nil
   "Rich per-candidate preview pane for completion."
@@ -247,6 +251,18 @@ vertico directly, which keeps it testable with a stub.")
   "Call the frontend function under KEY, or return nil."
   (when-let* ((fn (plist-get aperture-frontend key)))
     (funcall fn)))
+
+(defun aperture--active-session ()
+  "Return the session of the innermost active minibuffer, or nil.
+
+`aperture--session' is buffer-local to the minibuffer, but consult runs
+preview inside `with-selected-window' on the pane -- so the current
+buffer there is the previewed one, and the session has to be reached
+through the minibuffer window instead."
+  (when-let* ((win (active-minibuffer-window))
+              (buf (window-buffer win))
+              ((buffer-live-p buf)))
+    (buffer-local-value 'aperture--session buf)))
 
 ;;;; Preview key grammar
 
@@ -675,6 +691,26 @@ installs this as `:before' advice there rather than on a hook."
 
 ;;;; Mode
 
+(defvar aperture--consult-arranged nil
+  "Non-nil once the consult load hook has been registered.")
+
+(defun aperture--consult-arrange ()
+  "Load the consult adapter, now or whenever consult arrives.
+
+consult is a soft dependency, so the adapter cannot simply be required.
+The hook is registered once per Emacs session rather than once per
+`aperture-mode' toggle, since `with-eval-after-load' entries accumulate
+and are never removed; it re-checks `aperture-mode' at load time so
+turning the mode off before consult arrives does not install anything."
+  (if (featurep 'consult)
+      (progn (require 'aperture-consult) (aperture-consult-install))
+    (unless aperture--consult-arranged
+      (setq aperture--consult-arranged t)
+      (with-eval-after-load 'consult
+        (when aperture-mode
+          (require 'aperture-consult)
+          (aperture-consult-install))))))
+
 ;;;###autoload
 (define-minor-mode aperture-mode
   "Show a rich preview pane beside completion candidates."
@@ -688,11 +724,17 @@ installs this as `:before' advice there rather than on a hook."
         ;; happen at a point only the frontend knows about.  See
         ;; `aperture-vertico-install'.
         (aperture-vertico-install)
+        (aperture--consult-arrange)
         ;; Late, so vertico-buffer restores its own state before we undo ours.
+        ;; It also puts us after consult, whose own exit hook runs at depth 0:
+        ;; consult resets its preview while the pane still exists, then we take
+        ;; the layout down.
         (add-hook 'minibuffer-exit-hook #'aperture--teardown 90))
     (remove-hook 'minibuffer-exit-hook #'aperture--teardown)
     (when (fboundp 'aperture-vertico-uninstall)
-      (aperture-vertico-uninstall))))
+      (aperture-vertico-uninstall))
+    (when (featurep 'aperture-consult)
+      (aperture-consult-uninstall))))
 
 (provide 'aperture)
 ;;; aperture.el ends here

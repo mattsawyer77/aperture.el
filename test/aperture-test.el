@@ -15,6 +15,9 @@
 (require 'ert)
 (require 'aperture)
 (require 'aperture-previewers)
+;; Loads without consult, on purpose: the adapter is soft-dependent, and being
+;; able to load it here is what lets its logic be tested at all.
+(require 'aperture-consult)
 
 ;;;; Normalization
 
@@ -187,6 +190,84 @@
       ;; previewer of our own.
       (should (null (aperture--skip-reason 'consult-location 'consult-line)))
       (should (null (aperture--skip-reason 'file 'find-file))))))
+
+;;;; consult adapter
+
+;; The window arrangement that provokes the bug needs a live minibuffer and a
+;; real frame, so it is reproduced by hand in §3.5c rather than here.  What is
+;; testable is the decision: when to divert preview into the pane, when to
+;; leave consult alone, and that "already showing" is not a redundant switch.
+
+(defmacro aperture-test--with-consult-stub (pane &rest body)
+  "Run BODY with PANE as the preview target and consult stubbed out.
+Binds `calls' to a list of what the advice did."
+  (declare (indent 1) (debug t))
+  `(let (calls)
+     (cl-letf (((symbol-function 'aperture-consult--pane-for-preview)
+                (lambda () ,pane))
+               ((symbol-function 'consult--buffer-action)
+                (lambda (buf &optional _norecord) (push (cons 'action buf) calls))))
+       ,@body
+       (nreverse calls))))
+
+(ert-deftest aperture-test-consult-diverts-preview-into-the-pane ()
+  "The whole point: a target visible elsewhere still previews in the pane."
+  (let* ((buf (generate-new-buffer "aperture-test-target"))
+         (other (generate-new-buffer "aperture-test-other"))
+         (win (selected-window)))
+    (unwind-protect
+        (let ((pos (with-current-buffer buf (insert "hi") (copy-marker 1))))
+          (set-window-buffer win other)
+          (let* ((fn-called nil)
+                 (calls (aperture-test--with-consult-stub win
+                          (should (eq t (aperture-consult--ensure-buffer
+                                         (lambda (_pos) (setq fn-called t) 'stock)
+                                         pos))))))
+            ;; consult's own resolution must not run, and ours must.
+            (should-not fn-called)
+            (should (equal calls (list (cons 'action buf))))))
+      (kill-buffer buf)
+      (kill-buffer other))))
+
+(ert-deftest aperture-test-consult-does-not-reswitch-visible-buffer ()
+  "If the pane already shows the target there is nothing to do."
+  (let ((buf (generate-new-buffer "aperture-test-target"))
+        (win (selected-window)))
+    (unwind-protect
+        (let ((pos (with-current-buffer buf (insert "hi") (copy-marker 1))))
+          (set-window-buffer win buf)
+          (should (null (aperture-test--with-consult-stub win
+                          (should (eq t (aperture-consult--ensure-buffer
+                                         #'ignore pos)))))))
+      (kill-buffer buf))))
+
+(ert-deftest aperture-test-consult-passes-through-without-a-session ()
+  "With no aperture session, consult must behave exactly as it does alone."
+  (let ((buf (generate-new-buffer "aperture-test-target")))
+    (unwind-protect
+        (let ((pos (with-current-buffer buf (insert "hi") (copy-marker 1))))
+          (should (null (aperture-test--with-consult-stub nil
+                          (should (eq 'stock (aperture-consult--ensure-buffer
+                                              (lambda (_pos) 'stock) pos)))))))
+      (kill-buffer buf))))
+
+(ert-deftest aperture-test-consult-passes-through-non-markers ()
+  "A plain position carries no buffer; consult's own handling applies."
+  (should (null (aperture-test--with-consult-stub (selected-window)
+                  (should (eq 'stock (aperture-consult--ensure-buffer
+                                      (lambda (_pos) 'stock) 42)))))))
+
+(ert-deftest aperture-test-consult-passes-through-dead-buffer ()
+  "A marker into a killed buffer must not be diverted."
+  (let* ((buf (generate-new-buffer "aperture-test-target"))
+         (pos (with-current-buffer buf (insert "hi") (copy-marker 1))))
+    (kill-buffer buf)
+    (should (null (aperture-test--with-consult-stub (selected-window)
+                    (should (eq 'stock (aperture-consult--ensure-buffer
+                                        (lambda (_pos) 'stock) pos))))))))
+
+(ert-deftest aperture-test-active-session-is-nil-without-a-minibuffer ()
+  (should (null (aperture--active-session))))
 
 ;;;; Logging
 
