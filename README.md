@@ -1,6 +1,6 @@
 # aperture
 
-[![CI](https://github.com/msawyer/aperture.el/actions/workflows/ci.yml/badge.svg)](https://github.com/msawyer/aperture.el/actions/workflows/ci.yml)
+[![CI](https://github.com/mattsawyer77/aperture.el/actions/workflows/ci.yml/badge.svg)](https://github.com/mattsawyer77/aperture.el/actions/workflows/ci.yml)
 
 A preview pane for Emacs completion. Telescope-style two-pane UX, on vertico.
 
@@ -48,7 +48,7 @@ Not on MELPA yet. Until it is:
 ;; use-package's :vc keyword needs Emacs 30; on 29 use M-x package-vc-install
 ;; with the same URL.
 (use-package aperture
-  :vc (:url "https://github.com/msawyer/aperture.el" :rev :newest)
+  :vc (:url "https://github.com/mattsawyer77/aperture.el" :rev :newest)
   :after vertico
   :config (aperture-mode 1))
 ```
@@ -57,7 +57,7 @@ or with straight:
 
 ```elisp
 (use-package aperture
-  :straight (aperture :type git :host github :repo "msawyer/aperture.el")
+  :straight (aperture :type git :host github :repo "mattsawyer77/aperture.el")
   :after vertico
   :config (aperture-mode 1))
 ```
@@ -70,7 +70,7 @@ or with straight:
 ```elisp
 (aperture
  :fetcher github
- :repo "msawyer/aperture.el"
+ :repo "mattsawyer77/aperture.el"
  :files ("aperture.el" "aperture-previewers.el" "aperture-vertico.el"
          "aperture-consult.el"))
 ```

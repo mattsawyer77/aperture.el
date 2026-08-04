@@ -6,7 +6,7 @@
 ;; Version: 0.1.0
 ;; Package-Requires: ((emacs "29.1") (vertico "1.7"))
 ;; Keywords: convenience, matching
-;; URL: https://github.com/msawyer/aperture.el
+;; URL: https://github.com/mattsawyer77/aperture.el
 ;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Commentary:
@@ -68,11 +68,11 @@ Defaults to `any' because the pane is the point of the package; an
 on-demand aperture is not a lighter aperture, it is a worse
 `embark-act'."
   :type '(choice (const :tag "Any key" any)
-                 (list :tag "Debounced" (const :debounce) (float :tag "Seconds")
-                       (const any))
-                 (const :tag "No preview" nil)
-                 (key :tag "Key")
-                 (repeat :tag "List of keys" key)))
+          (list :tag "Debounced" (const :debounce) (float :tag "Seconds")
+                (const any))
+          (const :tag "No preview" nil)
+          (key :tag "Key")
+          (repeat :tag "List of keys" key)))
 
 (defcustom aperture-delay 0.15
   "Idle debounce before rendering a preview, in seconds.
