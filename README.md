@@ -119,9 +119,21 @@ is present and does nothing when it is not.
 (setq aperture-height 0.5       ; whole area: lines, or a fraction of the frame
       aperture-width 0.5        ; pane width within that area
       aperture-side 'right      ; or 'left
+      aperture-min-pane-width 40 ; below this, take the frame for the session
       aperture-key 'any         ; when to preview; grammar mirrors consult-preview-key
       aperture-delay 0.15)      ; debounce (ignored for cheap previewers)
 ```
+
+**If your frame is already split into columns**, aperture would otherwise carve its area out
+of one of them and leave both halves too narrow to read — about 32 columns each on a
+200-column frame split three ways. When the pane would come out under
+`aperture-min-pane-width`, the session takes the whole frame instead and restores your
+window configuration when it ends. The buffer you invoked completion from stays visible in
+the top window throughout. Sidebars that set the standard `no-delete-other-windows`
+parameter (treemacs, dired-sidebar) are left alone.
+
+Set `aperture-min-pane-width` to `nil` to always split in place, however narrow, or to a
+value above your frame width to always take the frame.
 
 `aperture-key` takes the same values as `consult-preview-key`, deliberately, so settings
 transfer verbatim: `nil`, `any`, a key, a list of keys, or `(:debounce SECS any)`.

@@ -100,6 +100,30 @@ producing an unusable sliver."
 An integer is columns; a float is a fraction."
   :type '(choice integer float))
 
+(defcustom aperture-min-pane-width 40
+  "Minimum usable width for the preview pane, in columns.
+
+When the window being split cannot give the pane this many columns, the
+session takes the whole frame instead: sibling windows are deleted, the
+usual splits follow, and the previous window configuration is restored
+when the session ends.
+
+This exists because aperture carves its area out of exactly one window,
+and that window is as wide as your layout left it.  On a 200-column frame
+already split into three columns, the pane lands at about 32 columns,
+which is not wide enough to read code in.  Widening it is not possible
+without removing the siblings: the window aperture splits must remain
+`minibuffer-selected-window' or consult previews into the wrong place
+entirely (see `aperture--build-layout'), so it cannot be swapped for a
+roomier one.
+
+Windows carrying the `no-delete-other-windows' parameter -- which is what
+well-behaved sidebars such as treemacs set -- survive regardless.
+
+nil disables this and always splits in place, however narrow the result.
+A value at or above your frame width makes it unconditional."
+  :type '(choice natnum (const :tag "Never take the frame" nil)))
+
 (defcustom aperture-partial-size (* 1024 1024)
   "Files larger than this are previewed partially rather than refused."
   :type 'natnum)
@@ -267,7 +291,7 @@ in a log."
 
 (cl-defstruct (aperture--session (:constructor aperture--session-make)
                                  (:copier nil))
-  pane pane-buffer list-win top-win config
+  pane pane-buffer list-win top-win config expanded
   (generation 0) timer cancel last-key previewer consult-owned buffers)
 
 (defvar-local aperture--session nil
@@ -541,6 +565,22 @@ Returns non-nil when the read was truncated."
   "Resolve SPEC (integer or fraction) against TOTAL."
   (if (floatp spec) (round (* total spec)) spec))
 
+(defun aperture--projected-pane-width (win)
+  "Columns the pane would get from splitting WIN, computed before splitting.
+`split-window' with a positive SIZE sizes the window being split, and
+that window is the pane -- so this is `aperture-width' resolved against
+WIN, not against the frame."
+  (aperture--size aperture-width (window-width win)))
+
+(defun aperture--expand-p (win)
+  "Non-nil if the session should take the frame rather than split WIN.
+See `aperture-min-pane-width'."
+  (and aperture-min-pane-width
+       (< (aperture--projected-pane-width win) aperture-min-pane-width)
+       ;; Nothing to gain when it is already the only window.
+       (cdr (window-list (window-frame win) 'no-minibuffer))
+       t))
+
 (defun aperture--build-layout (session)
   "Split the original window into the aperture layout for SESSION.
 
@@ -555,7 +595,15 @@ pane.  Splitting `above' leaves it as the bottom strip; splitting toward
             (aperture--session-pane-buffer session) (window-buffer orig)
             (aperture--session-config session) (current-window-configuration))
       (condition-case err
-          (let* ((total (window-height orig))
+          (let* ((_ (when (aperture--expand-p orig)
+                      ;; Strictly after saving the configuration above: that
+                      ;; is the only thing that can put these windows back.
+                      (aperture--log
+                       "layout taking frame: pane would be %d cols, `aperture-min-pane-width' %d"
+                       (aperture--projected-pane-width orig) aperture-min-pane-width)
+                      (delete-other-windows orig)
+                      (setf (aperture--session-expanded session) t)))
+                 (total (window-height orig))
                  (want (aperture--size aperture-height total)))
             (if (>= (- total want) aperture-min-top-height)
                 (setf (aperture--session-top-win session)
@@ -578,25 +626,32 @@ pane.  Splitting `above' leaves it as the bottom strip; splitting toward
          (aperture--restore session)
          nil)))))
 
+(defun aperture--restore-config (session)
+  "Restore SESSION's saved window configuration, if it has one."
+  (when-let* ((config (aperture--session-config session)))
+    (ignore-errors (set-window-configuration config))))
+
 (defun aperture--restore (session)
   "Undo SESSION's layout.
-Deletes only the windows we created and restores the pane's buffer; this
-is deliberately more surgical than `set-window-configuration', which
-would fight vertico-buffer's own teardown.  The saved configuration is
-kept as a last resort."
-  (condition-case nil
-      (progn
-        (dolist (win (list (aperture--session-list-win session)
-                           (aperture--session-top-win session)))
-          (when (and (window-live-p win) (window-parent win))
-            (delete-window win)))
-        (when (and (window-live-p (aperture--session-pane session))
-                   (buffer-live-p (aperture--session-pane-buffer session)))
-          (set-window-buffer (aperture--session-pane session)
-                             (aperture--session-pane-buffer session))))
-    (error
-     (when-let* ((config (aperture--session-config session)))
-       (ignore-errors (set-window-configuration config))))))
+Normally deletes only the windows we created and restores the pane's
+buffer; this is deliberately more surgical than
+`set-window-configuration', which would fight vertico-buffer's own
+teardown.  The saved configuration is kept as a last resort -- and is the
+only option when the session took the frame, since surgery cannot bring
+back windows that were deleted."
+  (if (aperture--session-expanded session)
+      (aperture--restore-config session)
+    (condition-case nil
+        (progn
+          (dolist (win (list (aperture--session-list-win session)
+                             (aperture--session-top-win session)))
+            (when (and (window-live-p win) (window-parent win))
+              (delete-window win)))
+          (when (and (window-live-p (aperture--session-pane session))
+                     (buffer-live-p (aperture--session-pane-buffer session)))
+            (set-window-buffer (aperture--session-pane session)
+                               (aperture--session-pane-buffer session))))
+      (error (aperture--restore-config session)))))
 
 ;;;; Session driver
 

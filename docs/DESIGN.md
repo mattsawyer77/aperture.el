@@ -241,7 +241,8 @@ into — a silent failure that looks like "preview goes to the wrong place."
 - **Not a child frame.** posframe was considered and rejected: no TTY support, focus and
   redisplay bugs, multi-monitor problems, and `vertico-posframe` is among the suspects for
   the display interference in §3.5b. Ordinary windows stay inspectable with the same tools
-  as everything else in Emacs.
+  as everything else in Emacs. **A stronger reason emerged after this was written**, and it
+  is now the decisive one — see §3.4a.
 - **The list window** is vertico-buffer's job, but its *placement* is ours. vertico-buffer
   picks a window by calling `display-buffer` on a throwaway buffer, then does
   `set-window-buffer win (current-buffer)` — the minibuffer buffer itself — and layers
@@ -261,6 +262,66 @@ into — a silent failure that looks like "preview goes to the wrong place."
 - The pane window is **never selected**. Scrolling is done remotely via commands bound in
   the minibuffer keymap (`aperture-scroll-up` / `-down` / `-other-window`).
 - If the user deletes either window mid-session, degrade silently — do not fight them.
+
+### 3.4a Narrow windows, and why the answer is not a child frame — **fixed**
+
+Reported after a month of use: with the frame already split into columns, aperture splits
+one of them again and both halves become too narrow to read.
+
+Measured on a 200-column frame, by pre-existing column count:
+
+| columns | pane width, splitting in place | pane width, taking the frame |
+|---|---|---|
+| 1 | 100 | 100 |
+| 2 | 50 | 100 |
+| 3 | **32** | 100 |
+| 4 | **23** | 100 |
+
+At one or two columns there is no problem. At three the pane is 32 columns, which is not
+enough to read code in. The cause is structural: **aperture carves its area out of exactly
+one window, and that window is as wide as the user's layout left it.**
+
+**Why the pane cannot simply be moved to a roomier window.** §3.4's split ordering exists
+because consult previews into `minibuffer-selected-window` (§3.5). The pane *is* that window
+object. Any fix that puts the pane somewhere else — another window, a side window, a child
+frame — breaks that, and preview lands back in the user's original buffer window.
+
+**This is what rules out posframe**, and it is a much harder objection than the four listed
+in §3.4. A child frame's window can never be `minibuffer-selected-window`, which is a window
+in the parent frame, fixed before the child frame exists. Making preview work there would
+mean intercepting every consult preview path — `consult--jump-preview`,
+`consult--file-preview`, `consult--buffer-preview`, theme preview, and whatever is added
+next — which is exactly the *redirect* approach §3.5 rejected after source reading and
+hardware confirmation. §3.5c is what one such interception costs to get right; the posframe
+version is that cost, repeated, forever. TTY support is the second reason and would be
+sufficient on its own.
+
+**The fix: give the session the frame, when and only when it needs it.** If the pane would
+come out under `aperture-min-pane-width` (default 40), `delete-other-windows` runs on the
+original window before the usual splits, and the saved window configuration is restored on
+exit. The original window object survives — it is the one `delete-other-windows` keeps — so
+invariant 1 holds unchanged, and every split below it is identical to the single-window case.
+
+Confirmed in batch across 1–4 columns: expansion fires only at 3+, the pane is the same
+window object throughout, and the exact original window count comes back on restore.
+
+- **Sidebars survive.** `delete-other-windows` honours the `no-delete-other-windows`
+  parameter, which is what treemacs, dired-sidebar and friends set. Verified: a sidebar
+  carrying it stays, and the pane still gets 85 of 200 columns. A side window that does
+  *not* set it is deleted and comes back from the saved configuration.
+- **Restore has to change with it.** The surgical restore in `aperture--restore` cannot
+  bring back deleted windows, so an expanded session restores from
+  `current-window-configuration` instead. The gentler path is kept for every other session,
+  since §3.4 wants to avoid fighting vertico-buffer's teardown where it can.
+- **Why a width threshold rather than a switch.** The complaint is about width, and the
+  table above shows width is what actually varies. A single-window user sees no change at
+  all; `nil` opts out; a value above the frame width makes it unconditional.
+
+**The tradeoff, stated plainly**, because it is a real one: during the session you lose
+sight of your other windows. What you keep is the buffer you invoked completion from, which
+stays visible in the top window — that is the context the design already decided was worth
+reserving space for. Everything else is restored on exit. This is also what telescope does,
+and aperture is explicitly modelled on it.
 
 ### 3.5 consult coexistence — **RESOLVED** (source reading, confirmed on hardware in §3.5a)
 

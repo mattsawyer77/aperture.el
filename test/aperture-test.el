@@ -139,6 +139,84 @@
               (should (equal (buffer-string) "hello")))))
       (delete-file file))))
 
+;;;; Taking the frame when the pane would be too narrow
+
+(defmacro aperture-test--with-columns (n &rest body)
+  "Run BODY with the frame split into N columns, `win' bound to the middle.
+Restores a single window afterwards, so tests stay independent."
+  (declare (indent 1) (debug t))
+  `(let ((aperture-debug nil))
+     (unwind-protect
+         (progn
+           (delete-other-windows)
+           (dotimes (_ (1- ,n)) (split-window-right))
+           (balance-windows)
+           (let ((win (nth (/ ,n 2) (window-list nil 'no-minibuffer))))
+             ,@body))
+       (delete-other-windows))))
+
+(ert-deftest aperture-test-expand-only-when-the-pane-would-be-narrow ()
+  "The threshold is on the pane's width, not on the window count."
+  (aperture-test--with-columns 1
+    (let ((aperture-min-pane-width 40))
+      ;; Sole window: nothing to delete, so nothing to gain.
+      (should-not (aperture--expand-p win))))
+  (aperture-test--with-columns 4
+    (let ((wide (1+ (aperture--projected-pane-width win))))
+      ;; Narrow enough to matter, and siblings exist.
+      (should (aperture--expand-p win))
+      ;; Same layout, threshold below what the pane would get: leave it alone.
+      (let ((aperture-min-pane-width (1- wide)))
+        (should-not (aperture--expand-p win)))
+      ;; Opting out entirely.
+      (let ((aperture-min-pane-width nil))
+        (should-not (aperture--expand-p win))))))
+
+(ert-deftest aperture-test-projected-pane-width-matches-the-real-split ()
+  "The prediction must match what `split-window' actually produces.
+Otherwise the threshold fires on the wrong layouts."
+  (aperture-test--with-columns 2
+    (let* ((predicted (aperture--projected-pane-width win))
+           (aperture-min-pane-width nil)
+           (session (aperture--session-make)))
+      (cl-letf (((symbol-function 'minibuffer-selected-window) (lambda () win)))
+        (aperture--build-layout session))
+      (should (= predicted (window-width (aperture--session-pane session))))
+      (aperture--restore session))))
+
+(ert-deftest aperture-test-taking-the-frame-keeps-the-pane-window-object ()
+  "Invariant 1: the pane must stay `minibuffer-selected-window'.
+That is the window object consult previews into, so it has to survive."
+  (aperture-test--with-columns 4
+    (let* ((session (aperture--session-make))
+           (aperture-min-pane-width 40)
+           ;; What splitting in place would have given the pane.
+           (narrow (aperture--projected-pane-width win))
+           (before (length (window-list nil 'no-minibuffer))))
+      (cl-letf (((symbol-function 'minibuffer-selected-window) (lambda () win)))
+        (aperture--build-layout session))
+      (should (aperture--session-expanded session))
+      (should (eq (aperture--session-pane session) win))
+      (should (window-live-p win))
+      ;; Wider than splitting in place would have managed.
+      (should (> (window-width win) narrow))
+      (aperture--restore session)
+      (should (= before (length (window-list nil 'no-minibuffer))))
+      (should (window-live-p win)))))
+
+(ert-deftest aperture-test-narrow-split-in-place-still-restores-surgically ()
+  "The unexpanded path must keep its gentler restore.
+Regressing it to `set-window-configuration' would fight vertico-buffer."
+  (aperture-test--with-columns 2
+    (let ((session (aperture--session-make))
+          (aperture-min-pane-width nil)
+          (before (length (window-list nil 'no-minibuffer))))
+      (cl-letf (((symbol-function 'minibuffer-selected-window) (lambda () win)))
+        (aperture--build-layout session))
+      (should-not (aperture--session-expanded session))
+      (aperture--restore session)
+      (should (= before (length (window-list nil 'no-minibuffer)))))))
+
 ;;;; Staleness
 
 (ert-deftest aperture-test-generation-staleness ()

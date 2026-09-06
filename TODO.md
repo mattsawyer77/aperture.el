@@ -14,12 +14,14 @@ Working notes. The reasoning behind every decision below is in
   default in `make try`. §7.1.
 - **M2 (consult adapter) — done.** One `:around` advice on
   `consult--jump-ensure-buffer`, fixing a confirmed defect in M1 behaviour. §3.5c.
+- **Narrow-window layout — fixed.** With the frame already split into columns, the pane
+  came out unusably narrow. Sessions now take the frame when the pane would fall below
+  `aperture-min-pane-width`. §3.4a, which also records why posframe cannot be the answer.
 - **M3 (ship) — done.** `package` and `bookmark` previewers, the dispatch gap they
   exposed (§4.1), five missing `aperture-consult-categories` entries (§4.2), README, CI,
   MELPA recipe. 52 tests.
-- On `main`. **No remote yet** — the CI badge and every install snippet in the README
-  point at `github.com/msawyer/aperture.el`, which does not exist. Creating it is the one
-  thing standing between here and a MELPA submission.
+- On `main`, pushed to `github.com/mattsawyer77/aperture.el`. In daily use for about a
+  month; two field reports so far, both fixed (§4.3, §3.4a).
 
 ## Manual checks owed
 
@@ -43,7 +45,8 @@ Each of these cost real debugging time. None of them announce themselves when vi
    window object must end up as the pane. Split `'above` first (leaves it as the bottom
    strip), then toward `aperture-side` (leaves it on the pane side). Any other order hands
    the pane role to a window consult will never touch, and preview "goes to the wrong
-   place" with no error.
+   place" with no error. `delete-other-windows` (§3.4a) is safe here only because it keeps
+   the window it is called on — anything that *replaces* that window instead breaks this.
 2. **Session start is `:before` advice on `vertico--setup`, not a hook** (§3.1).
    `completing-read-default` sets `minibuffer-completion-table` from inside its own
    `minibuffer-with-setup-hook` lambda. Any `minibuffer-setup-hook` entry early enough to
@@ -84,8 +87,8 @@ what it was built to replace.
 
 Nothing is blocking. In rough order of value:
 
-1. **Create the GitHub remote**, push, confirm CI is green on 29.1 (the declared floor has
-   never actually been compiled against), then submit the MELPA recipe from the README.
+1. **Confirm CI is green on 29.1** — the declared floor has never actually been compiled
+   against — then submit the MELPA recipe from the README.
 2. **Work the manual checks above.**
 3. Pick off items from "Deferred from M1" as they stop being hypothetical. The async path
    is the one with real risk: it has never executed.
