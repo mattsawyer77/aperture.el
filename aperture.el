@@ -619,7 +619,11 @@ pane.  Splitting `above' leaves it as the bottom strip; splitting toward
                       (aperture--log
                        "layout taking frame: pane would be %d cols, `aperture-min-pane-width' %d"
                        (aperture--projected-pane-width orig) aperture-min-pane-width)
-                      (delete-other-windows orig)
+                      ;; `delete-other-windows' SELECTS the window it keeps.
+                      ;; The minibuffer is selected while a session is being
+                      ;; built, so without this the user's next keystroke goes
+                      ;; into the previewed buffer instead of the prompt.
+                      (save-selected-window (delete-other-windows orig))
                       (setf (aperture--session-expanded session) t)))
                  (total (window-height orig))
                  (want (aperture--size aperture-height total)))

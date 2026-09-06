@@ -153,7 +153,11 @@ Restores a single window afterwards, so tests stay independent."
            (balance-windows)
            (let ((win (nth (/ ,n 2) (window-list nil 'no-minibuffer))))
              ,@body))
-       (delete-other-windows))))
+       ;; Explicit window: a test may leave the minibuffer selected, and
+       ;; `delete-other-windows' refuses to expand that one.
+       (let ((w (car (window-list nil 'no-minibuffer))))
+         (select-window w)
+         (delete-other-windows w)))))
 
 (ert-deftest aperture-test-expand-only-when-the-pane-would-be-narrow ()
   "The threshold is on the pane's width, not on the window count."
@@ -204,6 +208,24 @@ frame would cost the layout and widen the pane by nothing."
           (should (memq (aperture--expand-p (car (window-list nil 'no-minibuffer)))
                         '(nil t))))
       (delete-other-windows))))
+
+(ert-deftest aperture-test-taking-the-frame-keeps-the-minibuffer-selected ()
+  "`delete-other-windows' selects the window it keeps.
+The minibuffer is selected while a session is built, so losing that sends
+the user\='s next keystroke into the previewed buffer instead of the prompt.
+Window sizes look perfect when this is broken, which is why it needs its
+own test."
+  (aperture-test--with-columns 4
+    (let ((session (aperture--session-make))
+          (aperture-min-pane-width 40)
+          (mb (minibuffer-window)))
+      (select-window mb)
+      (should (eq (selected-window) mb))
+      (cl-letf (((symbol-function 'minibuffer-selected-window) (lambda () win)))
+        (aperture--build-layout session))
+      (should (aperture--session-expanded session))
+      (should (eq (selected-window) mb))
+      (aperture--restore session))))
 
 (ert-deftest aperture-test-projected-pane-width-matches-the-real-split ()
   "The prediction must match what `split-window' actually produces.

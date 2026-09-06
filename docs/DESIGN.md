@@ -325,6 +325,16 @@ window object throughout, and the exact original window count comes back on rest
   subsumes the sole-window case. **`window-total-width`, not `window-width`**: once a frame
   is split at all its root window is an *internal* window, and `window-width` accepts only
   live ones — the obvious spelling signals an error precisely when the feature fires.
+- **`delete-other-windows` selects the window it keeps.** A session is built with the
+  minibuffer selected, so calling it bare hands the selection to the pane's window and the
+  user's next keystroke goes into the previewed buffer instead of the prompt. Wrap it in
+  `save-selected-window`. This shipped broken and was reported from use; the geometry was
+  perfect throughout, which is exactly why the tests missed it — **they asserted widths and
+  window counts and never once asserted which window was selected.** There is now a test
+  that selects the minibuffer, builds a layout, and asserts the minibuffer is still
+  selected; it was confirmed to fail without the fix. Teardown was checked for the mirror
+  image and is fine: `set-window-configuration` restores the selected window from the saved
+  configuration, which was the minibuffer.
 - **The name promises more than it delivers**, and is kept only because the alternatives are
   worse. It is a trigger, not a floor: when the frame itself is too narrow, or the window is
   the only one, nothing can be done and the pane stays narrow. The docstring says so.
