@@ -172,6 +172,39 @@ Restores a single window afterwards, so tests stay independent."
       (let ((aperture-min-pane-width nil))
         (should-not (aperture--expand-p win))))))
 
+(ert-deftest aperture-test-stacked-windows-are-left-alone ()
+  "Deleting siblings only helps when they sit beside the window.
+Windows stacked above or below it are already full width, so taking the
+frame would cost the layout and widen the pane by nothing."
+  (let ((aperture-debug nil))
+    (unwind-protect
+        (progn
+          (delete-other-windows)
+          (split-window-below)
+          (balance-windows)
+          (let* ((win (car (window-list nil 'no-minibuffer)))
+                 ;; Forced above what the pane can get, so only the
+                 ;; can-this-possibly-help test can stop it.
+                 (aperture-min-pane-width
+                  (1+ (aperture--projected-pane-width win))))
+            (should-not (aperture--expand-p win))))
+      (delete-other-windows))))
+
+(ert-deftest aperture-test-frame-root-width-tolerates-internal-windows ()
+  "`frame-root-window' is not a live window once the frame is split, and
+`window-width' rejects those -- `window-total-width' is required."
+  (let ((aperture-debug nil))
+    (unwind-protect
+        (progn
+          (delete-other-windows)
+          (split-window-right)
+          (balance-windows)
+          (should-not (window-live-p (frame-root-window)))
+          ;; The predicate must not signal on that.
+          (should (memq (aperture--expand-p (car (window-list nil 'no-minibuffer)))
+                        '(nil t))))
+      (delete-other-windows))))
+
 (ert-deftest aperture-test-projected-pane-width-matches-the-real-split ()
   "The prediction must match what `split-window' actually produces.
 Otherwise the threshold fires on the wrong layouts."

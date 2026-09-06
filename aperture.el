@@ -101,12 +101,18 @@ An integer is columns; a float is a fraction."
   :type '(choice integer float))
 
 (defcustom aperture-min-pane-width 40
-  "Minimum usable width for the preview pane, in columns.
+  "Pane width, in columns, below which aperture will try to get more room.
 
-When the window being split cannot give the pane this many columns, the
-session takes the whole frame instead: sibling windows are deleted, the
-usual splits follow, and the previous window configuration is restored
-when the session ends.
+A trigger, not a guarantee -- the name is shorthand.  When the window
+being split cannot give the pane this many columns *and* deleting that
+window's side-by-side siblings would help, the session takes the whole
+frame instead: those siblings are deleted, the usual splits follow, and
+the previous window configuration is restored when the session ends.
+
+Nothing happens when widening is impossible: a frame that is simply
+narrow, a sole window, or windows stacked above and below rather than
+beside (they are already full width).  In those cases the pane stays as
+narrow as the frame dictates.
 
 This exists because aperture carves its area out of exactly one window,
 and that window is as wide as your layout left it.  On a 200-column frame
@@ -574,11 +580,23 @@ WIN, not against the frame."
 
 (defun aperture--expand-p (win)
   "Non-nil if the session should take the frame rather than split WIN.
-See `aperture-min-pane-width'."
+See `aperture-min-pane-width'.
+
+Two conditions, and the second is the one that is easy to forget: the
+pane must be too narrow, *and* deleting WIN\='s siblings must be capable
+of doing something about it.  Only siblings placed beside WIN make it
+narrow.  Windows stacked above or below it -- an ordinary
+\[split-window-below] -- are already full width, so taking the frame
+would cost the user their layout and widen the pane by nothing.
+
+`window-total-width\=' rather than `window-width\=', because the frame root
+is an internal window when the frame is split at all, and `window-width\='
+accepts only live windows.  This comparison also subsumes the
+sole-window case, whose width already equals the root\='s."
   (and aperture-min-pane-width
        (< (aperture--projected-pane-width win) aperture-min-pane-width)
-       ;; Nothing to gain when it is already the only window.
-       (cdr (window-list (window-frame win) 'no-minibuffer))
+       (< (window-total-width win)
+          (window-total-width (frame-root-window win)))
        t))
 
 (defun aperture--build-layout (session)

@@ -316,6 +316,18 @@ window object throughout, and the exact original window count comes back on rest
 - **Why a width threshold rather than a switch.** The complaint is about width, and the
   table above shows width is what actually varies. A single-window user sees no change at
   all; `nil` opts out; a value above the frame width makes it unconditional.
+- **The trigger needs two conditions, not one** — corrected after the first version shipped
+  with only the first. The pane must be too narrow, *and* deleting siblings must be capable
+  of fixing it. Only windows placed **beside** the original make it narrow. Windows stacked
+  above or below (an ordinary `C-x 2`) are already full width, so the first version deleted
+  them and widened the pane by exactly nothing. The test is
+  `(< (window-total-width win) (window-total-width (frame-root-window win)))`, which also
+  subsumes the sole-window case. **`window-total-width`, not `window-width`**: once a frame
+  is split at all its root window is an *internal* window, and `window-width` accepts only
+  live ones — the obvious spelling signals an error precisely when the feature fires.
+- **The name promises more than it delivers**, and is kept only because the alternatives are
+  worse. It is a trigger, not a floor: when the frame itself is too narrow, or the window is
+  the only one, nothing can be done and the pane stays narrow. The docstring says so.
 
 **The tradeoff, stated plainly**, because it is a real one: during the session you lose
 sight of your other windows. What you keep is the buffer you invoked completion from, which
