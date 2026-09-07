@@ -33,6 +33,11 @@
 ;; has to leave that window object where we want the pane -- bottom right --
 ;; so consult's own preview lands in it with no interception at all.  See
 ;; docs/DESIGN.md section 3.4 and 3.5.
+;;
+;; `aperture-display' selects a second, opt-in layout that floats the whole UI
+;; in a child frame instead.  It gives up the invariant above -- the pane
+;; cannot be `minibuffer-selected-window' there -- and pays for it with a
+;; redirect.  See `aperture-child-frame.el' and section 3.4b.
 
 ;;; Code:
 
@@ -42,6 +47,7 @@
 (declare-function aperture-vertico-install "aperture-vertico")
 (declare-function aperture-vertico-uninstall "aperture-vertico")
 (declare-function aperture-consult-install "aperture-consult")
+(declare-function aperture-child-frame--build "aperture-child-frame")
 (declare-function aperture-consult-uninstall "aperture-consult")
 (defvar consult--preview-function)
 
@@ -94,6 +100,24 @@ producing an unusable sliver."
 (defcustom aperture-side 'right
   "Which side of the aperture area holds the preview pane."
   :type '(choice (const right) (const left)))
+
+(defcustom aperture-display 'window
+  "Where the aperture layout is drawn.
+
+`window'\=' carves the layout out of the window completion was invoked
+from, leaving that buffer visible above it.  The default, and the only
+layout that works on a TTY.
+
+`child-frame'\=' floats the whole layout in a child frame over the parent,
+leaving every one of your windows visible behind it.  Needs a graphical
+display; degrades to `window'\=' with a line in the log without one.
+
+Not merely cosmetic: under `window'\=' the pane *is*
+`minibuffer-selected-window', so consult previews into it untouched.
+Under `child-frame'\=' it cannot be, and aperture redirects
+`consult--original-window' instead.  See docs/DESIGN.md section 3.4b."
+  :type '(choice (const :tag "Split the current window" window)
+                 (const :tag "Float in a child frame" child-frame)))
 
 (defcustom aperture-width 0.5
   "Width of the preview pane within the aperture area.
@@ -297,7 +321,7 @@ in a log."
 
 (cl-defstruct (aperture--session (:constructor aperture--session-make)
                                  (:copier nil))
-  pane pane-buffer list-win top-win config expanded
+  pane pane-buffer list-win top-win config expanded frame
   (generation 0) timer cancel last-key previewer consult-owned buffers)
 
 (defvar-local aperture--session nil
@@ -599,7 +623,36 @@ sole-window case, whose width already equals the root\='s."
           (window-total-width (frame-root-window win)))
        t))
 
+(defun aperture--child-frame-capable-p ()
+  "Non-nil if this Emacs can draw a child frame here.
+`tty-child-frames' is Emacs 31, above the declared floor, so it is
+tested for rather than assumed."
+  (and (not noninteractive)
+       (or (display-graphic-p)
+           (featurep 'tty-child-frames))
+       t))
+
+(defun aperture--display-mode ()
+  "Resolve `aperture-display' against what this display can actually do.
+Returns `window'\=' or `child-frame'\='.  A downgrade is logged, not silent:
+it would otherwise look exactly like a session the user never
+configured."
+  (if (eq aperture-display 'child-frame)
+      (if (aperture--child-frame-capable-p)
+          'child-frame
+        (aperture--log "layout `child-frame' unavailable (no graphic display), using `window'")
+        'window)
+    'window))
+
 (defun aperture--build-layout (session)
+  "Build the aperture layout for SESSION, per `aperture-display'."
+  (if (eq (aperture--display-mode) 'child-frame)
+      (progn
+        (require 'aperture-child-frame)
+        (aperture-child-frame--build session))
+    (aperture--build-window-layout session)))
+
+(defun aperture--build-window-layout (session)
   "Split the original window into the aperture layout for SESSION.
 
 Ordering is load-bearing.  consult previews into
@@ -654,15 +707,24 @@ pane.  Splitting `above' leaves it as the bottom strip; splitting toward
     (ignore-errors (set-window-configuration config))))
 
 (defun aperture--restore (session)
-  "Undo SESSION's layout.
-Normally deletes only the windows we created and restores the pane's
-buffer; this is deliberately more surgical than
-`set-window-configuration', which would fight vertico-buffer's own
-teardown.  The saved configuration is kept as a last resort -- and is the
-only option when the session took the frame, since surgery cannot bring
-back windows that were deleted."
-  (if (aperture--session-expanded session)
-      (aperture--restore-config session)
+  "Undo SESSION's layout.  Three cases, because they undo differently:
+
+  - A child-frame session touched nothing outside its frame, so deleting
+    the frame is the whole of it (docs/DESIGN.md section 3.4b).
+  - A session that took the frame (section 3.4a) can only come back from
+    the saved configuration: surgery cannot restore deleted windows.
+  - Otherwise, delete only the windows we created and put the pane's
+    buffer back.  Deliberately more surgical than
+    `set-window-configuration', which would fight vertico-buffer's own
+    teardown.  The saved configuration is kept as a last resort."
+  (cond
+   ((aperture--session-frame session)
+    (aperture--log "restore deleting child frame")
+    (let ((frame (aperture--session-frame session)))
+      (when (frame-live-p frame) (ignore-errors (delete-frame frame)))))
+   ((aperture--session-expanded session)
+    (aperture--restore-config session))
+   (t
     (condition-case nil
         (progn
           (dolist (win (list (aperture--session-list-win session)
@@ -673,7 +735,7 @@ back windows that were deleted."
                      (buffer-live-p (aperture--session-pane-buffer session)))
             (set-window-buffer (aperture--session-pane session)
                                (aperture--session-pane-buffer session))))
-      (error (aperture--restore-config session)))))
+      (error (aperture--restore-config session))))))
 
 ;;;; Session driver
 

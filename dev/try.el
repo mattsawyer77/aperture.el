@@ -31,6 +31,12 @@
 ;;     +-------------------+-------------------+
 ;;     |  minibuffer                           |
 ;;     +---------------------------------------+
+;;
+;; `make try-child-frame' runs the same thing in a GUI Emacs with
+;; `aperture-display' set to `child-frame'.  The layout floats instead, over
+;; windows that must be exactly as you left them.  Check there that the frame
+;; vanishes on both RET and C-g, and that the cursor is visible in the child
+;; frame rather than stranded in the parent's minibuffer.
 
 ;;; Code:
 
@@ -43,6 +49,11 @@
 ;; the log too.
 (setq aperture-debug t)
 
+;; Set before `aperture-mode' so the mode's marker line records which layout
+;; the session was configured for.
+(when (equal (getenv "APERTURE_DISPLAY") "child-frame")
+  (setq aperture-display 'child-frame))
+
 (vertico-mode 1)
 (aperture-mode 1)
 
@@ -51,6 +62,10 @@
   (insert (format "emacs    %s\n" emacs-version))
   (insert (format "aperture-key     %S\n" aperture-key))
   (insert (format "aperture-height  %S\n" aperture-height))
+  (insert (format "aperture-display %S%s\n" aperture-display
+                  (if (and (eq aperture-display 'child-frame)
+                           (not (aperture--child-frame-capable-p)))
+                      "  (degrades to `window': no graphic display)" "")))
   (insert (format "consult          %s\n\n" (if (featurep 'consult) "loaded" "absent")))
   (insert "Try:  M-x  /  C-x C-f  /  M-x consult-line\n\n")
   (insert "Checks:\n")

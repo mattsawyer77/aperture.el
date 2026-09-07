@@ -345,6 +345,60 @@ stays visible in the top window — that is the context the design already decid
 reserving space for. Everything else is restored on exit. This is also what telescope does,
 and aperture is explicitly modelled on it.
 
+### 3.4b The child-frame layout — **shipped, opt-in** (§3.4a's objection was wrong)
+
+§3.4a rejected this because preview would mean "intercepting every consult preview path …
+repeated, forever". That is wrong. In consult `20260731.2051`, `consult--original-window`
+(consult.el:950) is a function recomputed on every preview — so there is no variable to
+rebind, which is the half §3.4a got right — but all four call sites (1770, 1778, 1794,
+1825) wrap in `with-selected-window (consult--original-window)` and then act on
+`(selected-window)`. One `:around` advice covers every path. The cost is bounded; §3.4a's
+other objections stand on their own.
+
+`aperture-display` selects the layout and defaults to `window`. `child-frame` puts the
+whole UI — prompt, candidate list and pane — in a frame aperture owns, and degrades to
+`window` with a log line when `(or (display-graphic-p) (featurep 'tty-child-frames))` is
+nil.
+
+**The gate was whether an active minibuffer survives the frame hop.**
+`with-selected-window` on a window in another frame selects that *frame*, and
+`minibuffer-follows-selected-frame` defaults to `t`. It does not fire here: a child frame
+created with `(minibuffer . <parent's minibuffer-window>)` has no minibuffer to receive
+one. Confirmed with the default `t`, along with the rest of the layout, by
+`dev/spike-posframe.el` — 29 checks on Emacs 30.2.50 / macOS. That file ships because
+batch cannot reach any of this and it is the only executable record.
+
+**Two things get simpler:**
+
+- §3.5c's defect does not arise. `consult--jump-ensure-buffer` calls `get-buffer-window`
+  with no ALL-FRAMES argument, and during preview the selected frame is the child frame,
+  so the parent's window showing the same buffer is invisible to it. The adapter stays for
+  the window layout and is harmless here.
+- §3.4a's apparatus is unnecessary. The parent's windows are never touched: no
+  `delete-other-windows`, no saved configuration, no `save-selected-window` trap. Teardown
+  is `delete-frame`, and the user keeps *all* their windows as context rather than one.
+
+**It is not `vertico-posframe` integration.** That package owns its frame's single window
+and re-fits it on every `vertico--display-candidates`; a split made inside it would be
+fought on every keystroke. aperture owns its own frame and stands *down for*
+vertico-posframe instead — per-session, by advising `vertico-posframe-mode-workable-p`,
+never by touching the global mode, since `cl-defmethod` `&context` re-resolves per call.
+The cost is that a user's `vertico-posframe-*` settings do not shape an aperture session.
+
+**Costs, permanent:**
+
+- **No CI coverage, ever.** Only the geometry is reachable in batch; the layout, the
+  redirect and the rendering are hardware checks (TODO.md).
+- **It is a redirect.** One function rather than many, but still aperture reaching into
+  consult rather than arranging geometry and standing back, which is what §3.5 chose. The
+  window layout keeps that property; this one trades it away deliberately.
+- **Verified on emacs-mac 30.2.50 / macOS only.** X and pgtk child frames have diverged
+  historically.
+
+Two traps found the hard way, both now invariants in TODO.md: `abort-recursive-edit`
+arrives as a `quit` signal, which `ignore-errors` does not catch; and
+`minibuffer-selected-window` is nil inside any `with-selected-window`, on any frame.
+
 ### 3.5 consult coexistence — **RESOLVED** (source reading, confirmed on hardware in §3.5a)
 
 Findings below are from consult `540ad1e` (2026-06-07). Line references are to that
@@ -697,6 +751,7 @@ aperture-height                        ; lines or frame fraction for the whole a
 aperture-min-top-height                ; below this, skip the top split entirely
 aperture-side                          ; 'right (default) | 'left
 aperture-width                         ; pane width as a fraction or columns
+aperture-min-pane-width                ; below this, take the frame; see §3.4a
 aperture-key                           ; default `any'; grammar mirrors consult-preview-key
 aperture-delay                         ; debounce, default 0.15 (ignored for :cost free)
 aperture-consult-categories            ; open the pane for geometry, let consult render
@@ -710,6 +765,17 @@ aperture-excluded-buffers
 aperture-max-count                     ; live preview buffer cap
 
 aperture-debug                         ; log to *aperture-log*; see §7.1
+
+;; child-frame layout — see §3.4b.  `aperture-height' and `aperture-min-top-height'
+;; do not apply there, there being no top window; `aperture-side', `aperture-width'
+;; and `aperture-min-pane-width' do, the last by widening the frame rather than
+;; taking the parent's windows.
+aperture-display                       ; 'window (default) | 'child-frame
+aperture-child-frame-width             ; parent fraction, or columns
+aperture-child-frame-height            ; parent fraction, or lines
+aperture-child-frame-position          ; 'center | 'top | (X . Y) | function
+aperture-child-frame-border-width      ; 0 for none
+aperture-child-frame-parameters        ; extra frame parameters, applied last
 ```
 
 Naming deliberately shadows consult's (`consult-preview-partial-size`,

@@ -73,13 +73,34 @@ unchanged."
         t)
     (funcall fn pos)))
 
+(defun aperture-consult--original-window (fn)
+  "Around advice for `consult--original-window', calling FN.
+
+Names the pane for child-frame sessions, which cannot rely on the pane
+being `minibuffer-selected-window' the way the window layout does.  This
+is the only place aperture redirects consult rather than reshaping around
+it (docs/DESIGN.md section 3.4b).
+
+One function covers every preview path: `consult--jump-preview',
+`consult--buffer-preview' and the rest all run inside
+`with-selected-window (consult--original-window)' and then act on
+`(selected-window)'.  Other sessions call through unchanged."
+  (or (when-let* ((session (aperture--active-session))
+                  ((aperture--session-frame session))
+                  (pane (aperture--session-pane session))
+                  ((window-live-p pane)))
+        pane)
+      (funcall fn)))
+
 (defun aperture-consult-install ()
   "Install aperture's consult adaptations."
-  (advice-add 'consult--jump-ensure-buffer :around #'aperture-consult--ensure-buffer))
+  (advice-add 'consult--jump-ensure-buffer :around #'aperture-consult--ensure-buffer)
+  (advice-add 'consult--original-window :around #'aperture-consult--original-window))
 
 (defun aperture-consult-uninstall ()
   "Remove aperture's consult adaptations."
-  (advice-remove 'consult--jump-ensure-buffer #'aperture-consult--ensure-buffer))
+  (advice-remove 'consult--jump-ensure-buffer #'aperture-consult--ensure-buffer)
+  (advice-remove 'consult--original-window #'aperture-consult--original-window))
 
 (provide 'aperture-consult)
 ;;; aperture-consult.el ends here

@@ -21,9 +21,10 @@ NEWER := --eval '(setq load-prefer-newer t)'
 
 BATCH := $(EMACS) -Q --batch $(NEWER) -L . -L test $(DEPS)
 
-SRCS := aperture.el aperture-previewers.el aperture-vertico.el aperture-consult.el
+SRCS := aperture.el aperture-previewers.el aperture-vertico.el aperture-consult.el \
+        aperture-child-frame.el
 
-.PHONY: all check deps compile test lint package-lint clean try
+.PHONY: all check deps compile test lint package-lint clean try try-child-frame spike
 
 all: compile test
 
@@ -65,6 +66,17 @@ package-lint:
 # is a preview behaving like an older revision rather than an error.
 try:
 	@$(EMACS) -nw -Q $(NEWER) -L . $(DEPS) -l dev/try.el
+
+# `try' for the child-frame layout (docs/DESIGN.md section 3.4b).  GUI on
+# purpose -- no -nw -- because child frames need a display.
+try-child-frame:
+	@APERTURE_DISPLAY=child-frame $(EMACS) -Q $(NEWER) -L . $(DEPS) -l dev/try.el
+
+# Child-frame layout spike (docs/DESIGN.md section 3.4b).  GUI Emacs on
+# purpose: child frames need a display, which is also why nothing here can run
+# in CI.  Unlike `try', this must NOT use -nw.
+spike:
+	@$(EMACS) -Q $(NEWER) -L . $(DEPS) -l dev/spike-posframe.el
 
 clean:
 	@rm -f *.elc test/*.elc

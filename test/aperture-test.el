@@ -640,5 +640,96 @@ would survive the mode being turned off."
   (should (string-match-p "buffer=" (aperture--log-result '(:buffer "x"))))
   (should (string-match-p "content=2 chars" (aperture--log-result '(:content "hi")))))
 
+;;;; Child-frame layout (docs/DESIGN.md section 3.4b)
+;;
+;; Batch cannot make a child frame, so only mode resolution and geometry are
+;; reachable here.  The frame, the redirect and the rendering are covered by
+;; `dev/spike-posframe.el' on hardware; that gap does not close.
+
+(ert-deftest aperture-test-display-mode-defaults-to-window ()
+  (let ((aperture-display 'window))
+    (should (eq (aperture--display-mode) 'window))))
+
+(ert-deftest aperture-test-display-mode-degrades-without-a-display ()
+  "Batch is exactly the case that must degrade rather than signal."
+  (let ((aperture-display 'child-frame))
+    (should (eq (aperture--display-mode) 'window))))
+
+(ert-deftest aperture-test-child-frame-not-capable-in-batch ()
+  (should-not (aperture--child-frame-capable-p)))
+
+(ert-deftest aperture-test-child-frame-loads-without-vertico-or-consult ()
+  "Invariant 5 extends to the new file: it must not drag vertico in."
+  (should (require 'aperture-child-frame nil t))
+  (should-not (featurep 'vertico)))
+
+(ert-deftest aperture-test-child-frame-geometry-fractions ()
+  (require 'aperture-child-frame)
+  (let ((aperture-child-frame-width 0.5)
+        (aperture-child-frame-height 0.5)
+        (aperture-child-frame-position 'center)
+        (aperture-min-pane-width nil))
+    (cl-letf (((symbol-function 'frame-pixel-width) (lambda (&rest _) 1000))
+              ((symbol-function 'frame-pixel-height) (lambda (&rest _) 800))
+              ((symbol-function 'frame-char-width) (lambda (&rest _) 10))
+              ((symbol-function 'frame-char-height) (lambda (&rest _) 20)))
+      (should (equal (aperture-child-frame--geometry nil) '(250 200 500 400))))))
+
+(ert-deftest aperture-test-child-frame-geometry-never-exceeds-parent ()
+  (require 'aperture-child-frame)
+  (let ((aperture-child-frame-width 2.0)
+        (aperture-child-frame-height 2.0)
+        (aperture-child-frame-position 'center)
+        (aperture-min-pane-width nil))
+    (cl-letf (((symbol-function 'frame-pixel-width) (lambda (&rest _) 1000))
+              ((symbol-function 'frame-pixel-height) (lambda (&rest _) 800))
+              ((symbol-function 'frame-char-width) (lambda (&rest _) 10))
+              ((symbol-function 'frame-char-height) (lambda (&rest _) 20)))
+      (should (equal (aperture-child-frame--geometry nil) '(0 0 1000 800))))))
+
+(ert-deftest aperture-test-child-frame-geometry-widens-for-min-pane-width ()
+  "It widens the frame here rather than taking the parent's (section 3.4a)."
+  (require 'aperture-child-frame)
+  (let ((aperture-child-frame-width 0.2)
+        (aperture-child-frame-height 0.5)
+        (aperture-child-frame-position 'center)
+        (aperture-width 0.5)
+        (aperture-min-pane-width 40))
+    (cl-letf (((symbol-function 'frame-pixel-width) (lambda (&rest _) 1000))
+              ((symbol-function 'frame-pixel-height) (lambda (&rest _) 800))
+              ((symbol-function 'frame-char-width) (lambda (&rest _) 10))
+              ((symbol-function 'frame-char-height) (lambda (&rest _) 20)))
+      ;; 0.2 of 1000px is 20 columns, so the pane would get 10.  40 columns
+      ;; of pane at a half share needs an 800px frame.
+      (should (equal (nth 2 (aperture-child-frame--geometry nil)) 800)))))
+
+(ert-deftest aperture-test-child-frame-geometry-position-forms ()
+  (require 'aperture-child-frame)
+  (let ((aperture-child-frame-width 0.5)
+        (aperture-child-frame-height 0.5)
+        (aperture-min-pane-width nil))
+    (cl-letf (((symbol-function 'frame-pixel-width) (lambda (&rest _) 1000))
+              ((symbol-function 'frame-pixel-height) (lambda (&rest _) 800))
+              ((symbol-function 'frame-char-width) (lambda (&rest _) 10))
+              ((symbol-function 'frame-char-height) (lambda (&rest _) 20)))
+      (let ((aperture-child-frame-position 'top))
+        (should (equal (aperture-child-frame--geometry nil) '(250 40 500 400))))
+      (let ((aperture-child-frame-position '(7 . 9)))
+        (should (equal (aperture-child-frame--geometry nil) '(7 9 500 400))))
+      (let ((aperture-child-frame-position (lambda (_p w h) (cons w h))))
+        (should (equal (aperture-child-frame--geometry nil) '(500 400 500 400)))))))
+
+(ert-deftest aperture-test-restore-deletes-the-child-frame ()
+  "A child-frame session must not fall through to window surgery."
+  (let ((session (aperture--session-make :frame 'not-a-live-frame
+                                         :list-win 'should-not-be-touched))
+        (deleted nil))
+    (cl-letf (((symbol-function 'frame-live-p) (lambda (f) (eq f 'not-a-live-frame)))
+              ((symbol-function 'delete-frame) (lambda (f) (setq deleted f)))
+              ((symbol-function 'delete-window)
+               (lambda (&rest _) (error "window surgery must not run"))))
+      (aperture--restore session))
+    (should (eq deleted 'not-a-live-frame))))
+
 (provide 'aperture-test)
 ;;; aperture-test.el ends here
