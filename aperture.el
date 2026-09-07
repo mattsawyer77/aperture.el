@@ -3,7 +3,7 @@
 ;; Copyright (C) 2026 Matt Sawyer
 
 ;; Author: Matt Sawyer
-;; Version: 0.1.0
+;; Version: 0.3.0
 ;; Package-Requires: ((emacs "29.1") (vertico "1.7"))
 ;; Keywords: convenience, matching
 ;; URL: https://github.com/mattsawyer77/aperture.el
@@ -117,7 +117,7 @@ Not merely cosmetic: under `window'\=' the pane *is*
 Under `child-frame'\=' it cannot be, and aperture redirects
 `consult--original-window' instead.  See docs/DESIGN.md section 3.4b."
   :type '(choice (const :tag "Split the current window" window)
-                 (const :tag "Float in a child frame" child-frame)))
+          (const :tag "Float in a child frame" child-frame)))
 
 (defcustom aperture-width 0.5
   "Width of the preview pane within the aperture area.
@@ -151,7 +151,12 @@ Windows carrying the `no-delete-other-windows' parameter -- which is what
 well-behaved sidebars such as treemacs set -- survive regardless.
 
 nil disables this and always splits in place, however narrow the result.
-A value at or above your frame width makes it unconditional."
+A value at or above your frame width makes it unconditional.
+
+Does not apply when `aperture-display' is `child-frame'\=': that frame's
+size is set directly by `aperture-child-frame-width', so there is no
+foreign layout to rescue the pane from.  A pane that still comes out
+under this width is logged."
   :type '(choice natnum (const :tag "Never take the frame" nil)))
 
 (defcustom aperture-partial-size (* 1024 1024)

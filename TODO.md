@@ -46,7 +46,10 @@ Confirmed on emacs-mac 30.2.50 / macOS, and owed again on any other platform:
 4. **The cursor is visible in the child frame**, not stranded in the parent's collapsed
    minibuffer.
 5. **X and pgtk.** Verified on macOS only. Child frames have diverged historically.
-6. **With `vertico-posframe-mode` on**, an aperture session must show aperture's frame and
+6. **`aperture-child-frame-width` actually changes the frame's width**, at several values
+   and on a narrow parent. It was a silent no-op under ~100 columns in the first version;
+   the geometry is unit-tested now, but the frame is not.
+7. **With `vertico-posframe-mode` on**, an aperture session must show aperture's frame and
    every other minibuffer must be untouched. Not yet exercised: vertico-posframe is not
    installed in the `emacs -Q` used for the checks.
 

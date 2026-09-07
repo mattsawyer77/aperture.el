@@ -687,21 +687,38 @@ would survive the mode being turned off."
               ((symbol-function 'frame-char-height) (lambda (&rest _) 20)))
       (should (equal (aperture-child-frame--geometry nil) '(0 0 1000 800))))))
 
-(ert-deftest aperture-test-child-frame-geometry-widens-for-min-pane-width ()
-  "It widens the frame here rather than taking the parent's (section 3.4a)."
+(ert-deftest aperture-test-child-frame-width-is-not-overridden-by-min-pane-width ()
+  "`aperture-min-pane-width' must not outrank an explicit frame width.
+It used to widen the frame, which made `aperture-child-frame-width' a
+no-op on any parent under roughly 100 columns and pinned the frame to
+full width under 80.  Regression test for that."
   (require 'aperture-child-frame)
-  (let ((aperture-child-frame-width 0.2)
+  (let ((aperture-child-frame-width 0.5)
         (aperture-child-frame-height 0.5)
         (aperture-child-frame-position 'center)
-        (aperture-width 0.5)
+        (aperture-width 0.5))
+    (cl-letf (((symbol-function 'frame-pixel-width) (lambda (&rest _) 1200))
+              ((symbol-function 'frame-pixel-height) (lambda (&rest _) 800))
+              ;; 1200/16 = 75 columns: inside the band that used to pin the
+              ;; frame to the full width of its parent.
+              ((symbol-function 'frame-char-width) (lambda (&rest _) 16))
+              ((symbol-function 'frame-char-height) (lambda (&rest _) 20)))
+      (dolist (min-pane '(nil 1 40 500))
+        (let ((aperture-min-pane-width min-pane))
+          (should (equal (nth 2 (aperture-child-frame--geometry nil)) 600)))))))
+
+(ert-deftest aperture-test-child-frame-width-in-columns ()
+  "An integer `aperture-child-frame-width' is columns, not pixels."
+  (require 'aperture-child-frame)
+  (let ((aperture-child-frame-width 40)
+        (aperture-child-frame-height 0.5)
+        (aperture-child-frame-position 'center)
         (aperture-min-pane-width 40))
-    (cl-letf (((symbol-function 'frame-pixel-width) (lambda (&rest _) 1000))
+    (cl-letf (((symbol-function 'frame-pixel-width) (lambda (&rest _) 1200))
               ((symbol-function 'frame-pixel-height) (lambda (&rest _) 800))
               ((symbol-function 'frame-char-width) (lambda (&rest _) 10))
               ((symbol-function 'frame-char-height) (lambda (&rest _) 20)))
-      ;; 0.2 of 1000px is 20 columns, so the pane would get 10.  40 columns
-      ;; of pane at a half share needs an 800px frame.
-      (should (equal (nth 2 (aperture-child-frame--geometry nil)) 800)))))
+      (should (equal (nth 2 (aperture-child-frame--geometry nil)) 400)))))
 
 (ert-deftest aperture-test-child-frame-geometry-position-forms ()
   (require 'aperture-child-frame)

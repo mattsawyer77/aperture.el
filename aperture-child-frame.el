@@ -93,12 +93,13 @@ file batch can reach; everything else needs a display."
          (h (if (floatp aperture-child-frame-height)
                 (round (* ph aperture-child-frame-height))
               (* aperture-child-frame-height ch))))
-    ;; `aperture-min-pane-width' means the same thing in both layouts.  Here it
-    ;; widens the frame rather than taking the parent's windows (section 3.4a).
-    (when aperture-min-pane-width
-      (let* ((share (if (floatp aperture-width) aperture-width 0.5))
-             (needed (round (/ (* aperture-min-pane-width cw) (max share 0.1)))))
-        (setq w (min pw (max w needed)))))
+    ;; `aperture-min-pane-width' deliberately has no say here.  In the window
+    ;; layout it rescues a pane made narrow by a layout the user did not choose
+    ;; for aperture's benefit (section 3.4a); this frame's size *is* their
+    ;; choice, so there is nothing to rescue and a safety net must not outrank
+    ;; a direct request.  An earlier version let it widen the frame, which made
+    ;; `aperture-child-frame-width' a no-op on any parent under ~100 columns.
+    ;; `aperture-child-frame--build' logs a too-narrow pane instead.
     (setq w (min w pw) h (min h ph))
     (pcase-let ((`(,x . ,y)
                  (pcase aperture-child-frame-position
@@ -176,7 +177,12 @@ to save, because the parent frame is never touched."
             ;; Nothing in the parent frame should walk in here with
             ;; `other-window'.
             (dolist (win (list pane (aperture--session-list-win session)))
-              (set-window-parameter win 'no-other-window t)))
+              (set-window-parameter win 'no-other-window t))
+            (when (and aperture-min-pane-width
+                       (< (window-width pane) aperture-min-pane-width))
+              (aperture--log
+               "pane   %d cols, under `aperture-min-pane-width' %d -- raise `aperture-child-frame-width'"
+               (window-width pane) aperture-min-pane-width)))
           (aperture--log "layout child-frame pane=%s | list=%s"
                          (aperture--log-window (aperture--session-pane session))
                          (aperture--log-window (aperture--session-list-win session)))

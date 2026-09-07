@@ -385,6 +385,14 @@ vertico-posframe instead — per-session, by advising `vertico-posframe-mode-wor
 never by touching the global mode, since `cl-defmethod` `&context` re-resolves per call.
 The cost is that a user's `vertico-posframe-*` settings do not shape an aperture session.
 
+**`aperture-min-pane-width` does not carry over**, and the first version was wrong to make
+it. In the window layout it rescues a pane made narrow by a layout the user chose for their
+own reasons; here the frame's size *is* `aperture-child-frame-width`, so there is nothing
+to rescue. Letting it widen the frame made that custom a silent no-op on any parent under
+roughly 100 columns, and pinned the frame to full width under 80 — a safety net outranking
+a direct request, which is the same silent-no-op failure §7.1 exists to catch. It now only
+logs a too-narrow pane, naming the knob to raise.
+
 **Costs, permanent:**
 
 - **No CI coverage, ever.** Only the geometry is reachable in batch; the layout, the
@@ -766,10 +774,10 @@ aperture-max-count                     ; live preview buffer cap
 
 aperture-debug                         ; log to *aperture-log*; see §7.1
 
-;; child-frame layout — see §3.4b.  `aperture-height' and `aperture-min-top-height'
-;; do not apply there, there being no top window; `aperture-side', `aperture-width'
-;; and `aperture-min-pane-width' do, the last by widening the frame rather than
-;; taking the parent's windows.
+;; child-frame layout — see §3.4b.  `aperture-side' and `aperture-width' apply,
+;; positioning the pane inside the frame.  `aperture-height',
+;; `aperture-min-top-height' and `aperture-min-pane-width' do not: there is no top
+;; window, and the frame's width is stated outright rather than inherited.
 aperture-display                       ; 'window (default) | 'child-frame
 aperture-child-frame-width             ; parent fraction, or columns
 aperture-child-frame-height            ; parent fraction, or lines

@@ -129,9 +129,11 @@ preview pane — in a child frame, leaving any pre-existing windows visible behi
 ```
 
 Needs a graphical Emacs; on a TTY it falls back to the window layout and says so in the
-log. `aperture-side`, `aperture-width` and `aperture-min-pane-width` work as usual — the
-last widens the frame rather than taking over the parent. `aperture-height` and
-`aperture-min-top-height` do not apply, since there is no top window.
+log. `aperture-side` and `aperture-width` work as usual, positioning the pane inside the
+frame. `aperture-height`, `aperture-min-top-height` and `aperture-min-pane-width` do not
+apply: there is no top window, and the frame's size is set directly by
+`aperture-child-frame-width` rather than inherited from a layout you did not choose. A pane
+that still comes out narrow is logged, naming the knob to turn.
 
 **This is not `vertico-posframe` integration.** aperture creates and splits its own child
 frame. If you use `vertico-posframe-mode`, aperture stands down for it per-session and
