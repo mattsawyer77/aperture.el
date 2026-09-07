@@ -9,3 +9,6 @@ local.mk
 # Written by `make deps'.
 .deps/
 .deps.mk
+
+# Written by `make spike'.
+dev/spike-results.txt

@@ -4,11 +4,10 @@
 
 A preview pane for Emacs completion. Telescope-style two-pane UX, on vertico.
 
-`marginalia` annotates each candidate with one line, because the completion API it
-implements returns a string appended to the candidate. That ceiling is structural. aperture
-adds a second surface — a pane rendering arbitrary, multi-line, fontified context for the
-selected candidate — dispatched on the candidate's completion category, and working for any
-`completing-read`.
+`aperture` differs from [`marginalia`](https://github.com/minad/marginalia), which annotates 
+each candidate with one line of context. Instead, `aperture` uses a vertically split pane 
+containing arbitrary, multi-line, fontified context for the selected candidate, dispatched 
+on the candidate's completion category, and working for any `completing-read`.
 
 ```
 +---------------------------------------+
@@ -25,14 +24,15 @@ selected candidate — dispatched on the candidate's completion category, and wo
 geometry and gets out of the way.
 
 **Status: alpha.** Working and tested, but not yet on MELPA and not yet used by anyone but
-its author. The design and its open questions are written down in
-[docs/DESIGN.md](docs/DESIGN.md); if you are evaluating this, that file is more honest than
-this one.
+myself. The design and its open questions are written down in
+[docs/DESIGN.md](docs/DESIGN.md).
 
 ## Requirements
 
 - Emacs 29.1+
 - [vertico](https://github.com/minad/vertico), including `vertico-buffer` (same package)
+- For the optional child-frame layout, a graphical Emacs. Everything else works on a
+  TTY.
 - [consult](https://github.com/minad/consult) — optional. aperture is fully useful without
   it; with it, aperture's pane becomes consult's preview window.
 - [marginalia](https://github.com/minad/marginalia) — optional, recommended. Not required
@@ -72,23 +72,86 @@ or with straight:
  :fetcher github
  :repo "mattsawyer77/aperture.el"
  :files ("aperture.el" "aperture-previewers.el" "aperture-vertico.el"
-         "aperture-consult.el"))
+         "aperture-consult.el" "aperture-child-frame.el"))
 ```
 
 Recipes live in [melpa/melpa](https://github.com/melpa/melpa), not here.
 </details>
 
-## What it previews
+## Configuration
 
-| Category | Shows | Beats the one-line annotation by |
-|---|---|---|
-| `symbol` `function` `variable` `command` `face` | signature, full docstring, current value | the whole docstring instead of its truncated first line |
-| `file` | file contents, fontified, bounded | showing the file rather than its size and mode |
-| `project-file` | the same, resolved against the project root (`project-find-file`, `projectile-find-file`) | works from any buffer in the project, not only one at the root |
-| `buffer` | the live buffer itself | same |
-| `package` | version, dependencies, homepage, and the package's own `Commentary` | the summary line is rarely enough to decide whether to install |
-| `bookmark` | the target file, centred on the stored position | a name with nothing behind it |
-| `kill-ring` | the entire entry | multi-line kills are unreadable in one line |
+```elisp
+(setq aperture-height 0.5        ; whole area: lines, or a fraction of the frame
+      aperture-width 0.5         ; pane width within that area
+      aperture-side 'right       ; or 'left
+      aperture-min-pane-width 40 ; below this, take the frame for the session
+      aperture-key 'any          ; when to preview; grammar mirrors consult-preview-key
+      aperture-delay 0.15)       ; debounce (ignored for cheap previewers)
+```
+
+`aperture-key` takes the same values as `consult-preview-key`, deliberately, so settings
+transfer verbatim: `nil`, `any`, a key, a list of keys, or `(:debounce SECS any)`.
+
+If your frame is already split into columns, the pane can come out too narrow to read. When
+it would fall under `aperture-min-pane-width`, the session takes the whole frame instead and
+restores your window configuration on exit; sidebars carrying `no-delete-other-windows`
+(treemacs, dired-sidebar) are left alone. Set it to `nil` to always split in place, however
+narrow, or above your frame width to always take the frame. [§3.4a](docs/DESIGN.md).
+
+In the minibuffer, `C-M-v` and `C-M-S-v` scroll the pane without leaving the prompt.
+
+Guards, all customizable: `aperture-partial-size`, `aperture-partial-chunk`,
+`aperture-excluded-files`, `aperture-excluded-buffers`. The names shadow consult's on
+purpose.
+
+### The child-frame layout (optional)
+
+`(setq aperture-display 'child-frame)` floats the whole UI — prompt, candidate list and
+preview pane — in a child frame, leaving any pre-existing windows visible behind it.
+
+```
++-----------------------------------+
+|  your windows untouched           |
+|  +---------------+-------------+  |
+|  | prompt+input  |             |  |
+|  | candidates    |  preview    |  |
+|  +---------------+-------------+  |
++-----------------------------------+
+```
+
+```elisp
+(setq aperture-display 'child-frame
+      aperture-child-frame-width 0.8        ; fraction of the parent, or columns
+      aperture-child-frame-height 0.6       ; fraction of the parent, or lines
+      aperture-child-frame-position 'center ; or 'top, or (X . Y), or a function
+      aperture-child-frame-border-width 1
+      aperture-child-frame-parameters nil)  ; frame parameters, applied last
+```
+
+Needs a graphical Emacs; on a TTY it falls back to the window layout and says so in the
+log. `aperture-side` and `aperture-width` work as usual, positioning the pane inside the
+frame. `aperture-height`, `aperture-min-top-height` and `aperture-min-pane-width` do not
+apply: there is no top window, and the frame's size is set directly by
+`aperture-child-frame-width` rather than inherited from a layout you did not choose. A pane
+that still comes out narrow is logged, naming the knob to turn.
+
+**This is not `vertico-posframe` integration.** aperture creates and splits its own child
+frame. If you use `vertico-posframe-mode`, aperture stands down for it per-session and
+never touches the global mode, so your other minibuffers are unaffected — but your
+`vertico-posframe-*` settings do not shape an aperture session. It also changes how consult
+preview is targeted; [§3.4b](docs/DESIGN.md) has the mechanism and the tradeoff.
+
+## Preview categories implemented
+
+| Category                                        | Preview information                                                                       |
+|-------------------------------------------------|-------------------------------------------------------------------------------------------|
+| `symbol` `function` `variable` `command` `face` | signature, full docstring, current value                                                  |
+| `file`                                          | file contents, fontified, bounded                                                         |
+| `project-file`                                  | the same, resolved against the project root (`project-find-file`, `projectile-find-file`) |
+| `buffer`                                        | the live buffer itself                                                                    |
+| `package`                                       | version, dependencies, homepage, and the package's own `Commentary`                       |
+| `bookmark`                                      | the target file, centred on the stored position                                           |
+| `kill-ring`                                     | the entire entry                                                                          |
 
 Anything else falls back to no pane at all, which is stock vertico.
 
@@ -100,49 +163,16 @@ guard suppresses a preview, the pane says so and names the variable responsible.
 
 ## With consult
 
-consult previews into `minibuffer-selected-window`. aperture arranges for that window
-*object* to be the pane, so consult's own preview lands there with no interception — see
-[§3.5](docs/DESIGN.md). For categories consult drives itself (`consult-line`,
-`consult-ripgrep`, `consult-imenu`, `consult-buffer`, xref, flymake, compile, org headings)
-aperture opens the pane for the geometry and stands down.
+consult previews into `minibuffer-selected-window`, and aperture arranges for that window
+*object* to be the pane, so consult's own preview lands there with no interception. For
+categories consult drives itself (`consult-line`, `consult-ripgrep`, `consult-imenu`,
+`consult-buffer`, xref, flymake, compile, org headings) aperture opens the pane for the
+geometry and stands down. [§3.5](docs/DESIGN.md).
 
-One adapter is needed, `aperture-consult.el`, and it does exactly one thing: keep preview in
-the pane when the target buffer is *already visible* in the window above it. Without it,
-during a multi-file search, a hit back in your original buffer previews into the top window
-and leaves the pane stale. [§3.5c](docs/DESIGN.md) documents the defect, the four cheaper
-fixes that were tested and rejected, and why this one is safe. It loads itself when consult
-is present and does nothing when it is not.
-
-## Configuration
-
-```elisp
-(setq aperture-height 0.5       ; whole area: lines, or a fraction of the frame
-      aperture-width 0.5        ; pane width within that area
-      aperture-side 'right      ; or 'left
-      aperture-min-pane-width 40 ; below this, take the frame for the session
-      aperture-key 'any         ; when to preview; grammar mirrors consult-preview-key
-      aperture-delay 0.15)      ; debounce (ignored for cheap previewers)
-```
-
-**If your frame is already split into columns**, aperture would otherwise carve its area out
-of one of them and leave both halves too narrow to read — about 32 columns each on a
-200-column frame split three ways. When the pane would come out under
-`aperture-min-pane-width`, the session takes the whole frame instead and restores your
-window configuration when it ends. The buffer you invoked completion from stays visible in
-the top window throughout. Sidebars that set the standard `no-delete-other-windows`
-parameter (treemacs, dired-sidebar) are left alone.
-
-Set `aperture-min-pane-width` to `nil` to always split in place, however narrow, or to a
-value above your frame width to always take the frame.
-
-`aperture-key` takes the same values as `consult-preview-key`, deliberately, so settings
-transfer verbatim: `nil`, `any`, a key, a list of keys, or `(:debounce SECS any)`.
-
-In the minibuffer, `C-M-v` and `C-M-S-v` scroll the pane without leaving the prompt.
-
-Guards, all customizable: `aperture-partial-size`, `aperture-partial-chunk`,
-`aperture-excluded-files`, `aperture-excluded-buffers`. The names shadow consult's on
-purpose.
+`aperture-consult.el` loads itself when consult is present and does nothing when it is not.
+It exists for one defect: during a multi-file search, a hit in a buffer that is already
+visible elsewhere would otherwise preview into that window and leave the pane stale.
+[§3.5c](docs/DESIGN.md).
 
 ## Writing a previewer
 
@@ -168,7 +198,7 @@ stale results are the core's job, not yours. The full contract is
 `aperture-command-previewers` maps a command symbol instead of a category, and wins over the
 registry — the command is often more specific.
 
-## Something is not working
+## Troubleshooting
 
 ```
 M-x aperture-show-log
@@ -176,7 +206,7 @@ M-x aperture-show-log
 
 That turns logging on and shows the log; reproduce the problem and read it. It records every
 point where aperture can silently do nothing: whether a session started and which reason it
-declined for, where the three windows actually landed, whether the candidate list
+declined for, where the windows actually landed, whether the candidate list
 interception fired, when consult took over. Two failures look identical from the outside — a
 session that never activated, and one that activated but laid its windows out wrong — and
 the log is what separates them. Please include it in a bug report.
@@ -197,16 +227,23 @@ aperture is not a replacement for any of these and works alongside all of them.
 
 - A layout where the candidate list stays in the minibuffer and only the pane opens.
   Not supported: it is neither telescope nor stock vertico. [§3.4](docs/DESIGN.md).
+- Driving `vertico-posframe`'s frame. The child-frame layout uses aperture's own.
+  [§3.4b](docs/DESIGN.md).
 - Replacing `describe-*` commands. The pane is for deciding *which* candidate; the real
   help buffer is for reading about it afterwards.
 
 ## Development
 
 ```bash
-make deps     # install vertico, consult, package-lint into .deps/
-make check    # compile, test, checkdoc, package-lint -- what CI runs
-make try      # interactive smoke test in emacs -Q
+make deps            # install vertico, consult, package-lint into .deps/
+make check           # compile, test, checkdoc, package-lint -- what CI runs
+make try             # interactive smoke test in emacs -Q (TTY)
+make try-child-frame # the same, with the child-frame layout (needs GUI Emacs)
+make spike           # the child-frame layout spike, 29 hardware checks (GUI)
 ```
+
+The child-frame layout has no CI coverage and cannot have any; `dev/spike-posframe.el` is
+the executable record instead. [§3.4b](docs/DESIGN.md).
 
 `make test` runs with no dependencies on the load path, on purpose: the core and the consult
 adapter must both load without vertico or consult present. Point `DEPS` at your own checkouts

@@ -18,6 +18,7 @@
 (defvar vertico--index)
 (declare-function vertico--candidate "vertico")
 (declare-function vertico-buffer-mode "vertico-buffer")
+(declare-function vertico-posframe-mode-workable-p "vertico-posframe")
 
 (defvar aperture-vertico--saved-buffer-mode 'unset
   "Value of `vertico-buffer-mode' before aperture enabled it.")
@@ -64,6 +65,29 @@ regardless of what else the user's config is doing."
                    (if aperture--session "no live list window" "no session"))
     (apply fn args)))
 
+(defun aperture-vertico--posframe-workable-p (fn &rest args)
+  "Around advice for `vertico-posframe-mode-workable-p', calling FN with ARGS.
+Report unworkable inside an aperture session, so vertico-posframe stands
+down for those and only those.
+
+Both packages hook `vertico--display-candidates'; run together, the
+candidates overlay binds to aperture's list window and the posframe shows
+a bare prompt.  Per-session on purpose -- turning the global mode off
+would change every other minibuffer the user has -- and sufficient,
+because `cl-defmethod' `&context' re-resolves per call."
+  (and (not (aperture--active-session)) (apply fn args)))
+
+(defun aperture-vertico--suppress-posframe (enable)
+  "Install or remove the vertico-posframe stand-down when ENABLE.
+Polled at install time rather than hung off `with-eval-after-load', for
+the same reasons as `aperture--consult-arrange'."
+  (when (fboundp 'vertico-posframe-mode-workable-p)
+    (if enable
+        (advice-add 'vertico-posframe-mode-workable-p :around
+                    #'aperture-vertico--posframe-workable-p)
+      (advice-remove 'vertico-posframe-mode-workable-p
+                     #'aperture-vertico--posframe-workable-p))))
+
 ;;;###autoload
 (defun aperture-vertico-install ()
   "Install the vertico frontend and list-window placement."
@@ -80,9 +104,10 @@ regardless of what else the user's config is doing."
   ;; the only point satisfying both.
   (advice-add 'vertico--setup :before #'aperture--setup)
   (advice-add 'vertico-buffer--setup :around #'aperture-vertico--place-list)
-  ;; aperture's only supported layout puts the candidate list in a window,
-  ;; which is vertico-buffer's job.  Enable it rather than requiring the user
-  ;; to discover that the package does nothing without it.
+  (aperture-vertico--suppress-posframe t)
+  ;; Both layouts put the candidate list in a window, and getting it there is
+  ;; vertico-buffer's job either way.  Enable it rather than requiring the
+  ;; user to discover that the package does nothing without it.
   (when (eq aperture-vertico--saved-buffer-mode 'unset)
     (setq aperture-vertico--saved-buffer-mode (bound-and-true-p vertico-buffer-mode)))
   (vertico-buffer-mode 1))
@@ -92,6 +117,7 @@ regardless of what else the user's config is doing."
   (setq aperture-frontend nil)
   (advice-remove 'vertico--setup #'aperture--setup)
   (advice-remove 'vertico-buffer--setup #'aperture-vertico--place-list)
+  (aperture-vertico--suppress-posframe nil)
   (unless (eq aperture-vertico--saved-buffer-mode 'unset)
     (vertico-buffer-mode (if aperture-vertico--saved-buffer-mode 1 -1))
     (setq aperture-vertico--saved-buffer-mode 'unset)))

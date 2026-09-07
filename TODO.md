@@ -20,8 +20,38 @@ Working notes. The reasoning behind every decision below is in
 - **M3 (ship) — done.** `package` and `bookmark` previewers, the dispatch gap they
   exposed (§4.1), five missing `aperture-consult-categories` entries (§4.2), README, CI,
   MELPA recipe. 52 tests.
+- **M4 (child-frame layout) — landed on `feature/posframe`, not yet merged.** Opt-in via
+  `aperture-display`; the whole UI floats in a child frame aperture owns, leaving every
+  parent window visible. §3.4b, which also records that §3.4a's reason for rejecting this
+  was wrong. 29 spike checks plus a hardware pass on both layouts. 73 tests.
 - On `main`, pushed to `github.com/mattsawyer77/aperture.el`. In daily use for about a
   month; two field reports so far, both fixed (§4.3, §3.4a).
+
+## Manual checks owed — child frame (permanent, not a backlog item)
+
+Batch cannot make a child frame, so **only the geometry of this layout is unit-tested and
+that will never change**. `make spike` runs the 29-check prototype; `make try-child-frame`
+runs the real thing. Both need a GUI Emacs; `make try` is `-nw` and cannot reach it.
+
+Confirmed on emacs-mac 30.2.50 / macOS, and owed again on any other platform:
+
+1. **Both layouts still work.** `aperture-display` `window`: pane is
+   `minibuffer-selected-window`, top window present, nothing else changed. `child-frame`:
+   frame appears, list left, pane right, parent windows and their buffers identical during
+   and after.
+2. **`consult-line` previews into the child pane** and scrolls to the match, while the
+   parent's window showing the same buffer stays put.
+3. **Teardown on both RET and C-g.** The frame must go; the parent's window count and
+   buffers must be exactly as before.
+4. **The cursor is visible in the child frame**, not stranded in the parent's collapsed
+   minibuffer.
+5. **X and pgtk.** Verified on macOS only. Child frames have diverged historically.
+6. **`aperture-child-frame-width` actually changes the frame's width**, at several values
+   and on a narrow parent. It was a silent no-op under ~100 columns in the first version;
+   the geometry is unit-tested now, but the frame is not.
+7. **With `vertico-posframe-mode` on**, an aperture session must show aperture's frame and
+   every other minibuffer must be untouched. Not yet exercised: vertico-posframe is not
+   installed in the `emacs -Q` used for the checks.
 
 ## Manual checks owed
 
@@ -67,7 +97,22 @@ Each of these cost real debugging time. None of them announce themselves when vi
    makes consult preview into the wrong window without `aperture-consult.el` (§3.5c). Any
    future layout change that puts more windows on screen has to be re-checked against
    `consult--jump-ensure-buffer`, which prefers *any* window already showing the target.
-7. **Registering a previewer does not make it reachable** (§4.1). Plenty of built-in
+7. **The child-frame layout inverts invariant 1, deliberately** (§3.4b). Its pane is *not*
+   `minibuffer-selected-window` and cannot be, so `aperture-consult.el` redirects
+   `consult--original-window` — the single chokepoint every consult preview path runs
+   through. Do not "fix" the window layout to work the same way: under `window`, not
+   redirecting is the whole point (§3.5).
+8. **Suppressing another display extension is per-session, never global.** vertico-buffer
+   and vertico-posframe both dispatch on `cl-defmethod` `&context`, which re-resolves per
+   call, so advising the predicate is enough. Toggling their global modes would change
+   every other minibuffer the user has.
+9. **`abort-recursive-edit` arrives as a `quit` signal, and `ignore-errors` catches only
+   `error`.** Any probe or hook that wraps a minibuffer read must catch `quit` explicitly
+   or it will unwind its caller silently. This cost real time in the M4 spike.
+10. **`minibuffer-selected-window` is nil inside any `with-selected-window`**, on any
+   frame — it requires the *selected* window to be a minibuffer window. Anything reading it
+   outside setup is reading nil.
+11. **Registering a previewer does not make it reachable** (§4.1). Plenty of built-in
    commands call `completing-read` on a bare list and declare no category at all —
    `describe-package` and `bookmark-jump` among them — so a registry entry for them is dead
    code. Before adding a previewer, check what the command's completion table actually
@@ -127,7 +172,9 @@ make check        # compile + test + lint + package-lint -- exactly what CI runs
 make deps         # install vertico/consult/package-lint into .deps/; needs network
 make compile      # warnings are errors
 make test         # deliberately needs nothing on the load path
-make try          # interactive smoke test in emacs -Q; needs DEPS
+make try          # interactive smoke test in emacs -Q (TTY); needs DEPS
+make try-child-frame  # the same with the child-frame layout; needs GUI Emacs
+make spike        # the M4 child-frame spike, 29 hardware checks; needs GUI Emacs
 ```
 
 `DEPS` points at vertico/consult checkouts. Set it in `local.mk` (untracked), or run
