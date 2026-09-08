@@ -7,10 +7,8 @@
 ;; Run with `make deps'.  Installs vertico, consult and package-lint into
 ;; .deps/, then writes .deps.mk with the resulting `-L' flags.
 ;;
-;; The point of writing a makefile fragment rather than doing the work inline
-;; in the workflow is that CI then runs exactly the same `make' targets a
-;; developer runs.  A CI job that reimplements the build is a second build,
-;; and it drifts.
+;; A makefile fragment rather than inline workflow steps, so CI runs the same
+;; `make' targets a developer runs.
 ;;
 ;; local.mk is never touched: that file is the developer's own machine
 ;; configuration.  .deps.mk *appends* to DEPS, so having both is harmless and

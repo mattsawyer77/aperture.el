@@ -16,20 +16,20 @@
 ;;     |     +---------------+-------------+   |
 ;;     +---------------------------------------+
 ;;
-;; Two facts carry the design.  Both are confirmed on hardware by
-;; dev/spike-posframe.el; the reasoning is in docs/DESIGN.md section 3.4b.
+;; Two facts the code depends on:
 ;;
 ;; 1. The frame borrows the parent's minibuffer window.  Selecting a window
 ;;    here selects the frame -- which is how consult's preview reaches the pane
-;;    -- and `minibuffer-follows-selected-frame' would otherwise relocate the
-;;    active minibuffer onto it.  With no minibuffer to receive one, it cannot.
+;;    -- and with no minibuffer of its own,
+;;    `minibuffer-follows-selected-frame' has nothing to relocate onto it.
 ;;
-;; 2. The pane cannot be `minibuffer-selected-window', so the invariant the
-;;    `window' layout relies on is unavailable, and `aperture-consult.el'
+;; 2. The pane cannot be `minibuffer-selected-window', so `aperture-consult.el'
 ;;    redirects `consult--original-window' instead.
 ;;
-;; This is not vertico-posframe integration; aperture owns this frame.  See
+;; aperture owns this frame; it is not vertico-posframe integration.  See
 ;; `aperture-vertico.el' for how it stands down for that package.
+;;
+;; Design notes: docs/DESIGN.md section 3.4b.
 
 ;;; Code:
 
@@ -79,10 +79,7 @@ for fonts, fringes, `alpha' and the like."
 ;;;; Geometry
 
 (defun aperture-child-frame--geometry (parent)
-  "Return (X Y WIDTH HEIGHT) in pixels for a child frame over PARENT.
-
-Kept separate from frame creation because it is the only part of this
-file batch can reach; everything else needs a display."
+  "Return (X Y WIDTH HEIGHT) in pixels for a child frame over PARENT."
   (let* ((pw (frame-pixel-width parent))
          (ph (frame-pixel-height parent))
          (cw (frame-char-width parent))
@@ -93,13 +90,9 @@ file batch can reach; everything else needs a display."
          (h (if (floatp aperture-child-frame-height)
                 (round (* ph aperture-child-frame-height))
               (* aperture-child-frame-height ch))))
-    ;; `aperture-min-pane-width' deliberately has no say here.  In the window
-    ;; layout it rescues a pane made narrow by a layout the user did not choose
-    ;; for aperture's benefit (section 3.4a); this frame's size *is* their
-    ;; choice, so there is nothing to rescue and a safety net must not outrank
-    ;; a direct request.  An earlier version let it widen the frame, which made
-    ;; `aperture-child-frame-width' a no-op on any parent under ~100 columns.
-    ;; `aperture-child-frame--build' logs a too-narrow pane instead.
+    ;; `aperture-min-pane-width' has no say here: this frame's size is stated
+    ;; outright by `aperture-child-frame-width'.  `aperture-child-frame--build'
+    ;; logs a too-narrow pane instead of widening the frame.
     (setq w (min w pw) h (min h ph))
     (pcase-let ((`(,x . ,y)
                  (pcase aperture-child-frame-position
@@ -151,8 +144,7 @@ file batch can reach; everything else needs a display."
 
 Same contract as `aperture--build-window-layout': fill the session's
 window slots, or log and return nil so the caller declines the session.
-There is no split ordering to get right here and no window configuration
-to save, because the parent frame is never touched."
+The parent frame is never touched, so there is no configuration to save."
   (let ((parent (window-frame (minibuffer-window))))
     (condition-case err
         (let* ((frame (aperture-child-frame--make parent))
@@ -171,8 +163,7 @@ to save, because the parent frame is never touched."
                 (aperture--session-pane session) (if pane-first root other)
                 (aperture--session-list-win session) (if pane-first other root))
           (let ((pane (aperture--session-pane session)))
-            ;; `pane-buffer' stays nil: it exists so the window layout can put
-            ;; a borrowed window's buffer back, and this layout borrows nothing.
+            ;; `pane-buffer' stays nil: nothing is borrowed to put back.
             (set-window-buffer pane (aperture--content-buffer session))
             ;; Nothing in the parent frame should walk in here with
             ;; `other-window'.
