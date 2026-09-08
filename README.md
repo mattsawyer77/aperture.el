@@ -4,28 +4,45 @@
 
 A preview pane for Emacs completion. Telescope-style two-pane UX, on vertico.
 
-`aperture` differs from [`marginalia`](https://github.com/minad/marginalia), which annotates 
-each candidate with one line of context. Instead, `aperture` uses a vertically split pane 
-containing arbitrary, multi-line, fontified context for the selected candidate, dispatched 
-on the candidate's completion category, and working for any `completing-read`.
+## Split-Window Layout
 
-```
-+---------------------------------------+
-|  original buffer - stays visible      |
-+-------------------+-------------------+
-|  candidate list   |  preview pane     |
-+-------------------+-------------------+
-|  minibuffer                           |
-+---------------------------------------+
-```
+![split window layout](demos/aperture-window-demo.webp)
+
+## Child/Posframe Layout
+
+![child-frame layout](demos/aperture-posframe-demo.webp)
+
+## Features
+
+`aperture` renders a multi-line, fontified context for vertico selection candidates 
+for any `completing-read`.
 
 `M-x` shows whole docstrings. `C-x C-f` shows file contents, fontified. `consult-line` and
 `consult-ripgrep` preview into the same pane they already would have — aperture arranges the
 geometry and gets out of the way.
 
-**Status: alpha.** Working and tested, but not yet on MELPA and not yet used by anyone but
-myself. The design and its open questions are written down in
-[docs/DESIGN.md](docs/DESIGN.md).
+**Status: alpha.** Works On My Machine (TM), but not yet on MELPA. The design and 
+its open questions are written down in [docs/DESIGN.md](docs/DESIGN.md).
+
+### Preview Categories Implemented
+
+| Category                                        | Preview information                                                                       |
+|-------------------------------------------------|-------------------------------------------------------------------------------------------|
+| `symbol` `function` `variable` `command` `face` | signature, full docstring, current value                                                  |
+| `file`                                          | file contents, fontified, bounded                                                         |
+| `project-file`                                  | the same, resolved against the project root (`project-find-file`, `projectile-find-file`) |
+| `buffer`                                        | the live buffer itself                                                                    |
+| `package`                                       | version, dependencies, homepage, and the package's own `Commentary`                       |
+| `bookmark`                                      | the target file, centred on the stored position                                           |
+| `kill-ring`                                     | the entire entry                                                                          |
+
+Anything else falls back to no pane at all, which is stock vertico.
+
+Previewing is deliberately careful about what it will not do: it never calls `find-file`
+(so no `find-file-hook`, no LSP client, no file-local variables on every keystroke), never
+reads remote paths, never runs a bookmark handler, and never fetches a package README over
+the network. Files over 1MB are read as a bounded head chunk rather than refused. When a
+guard suppresses a preview, the pane says so and names the variable responsible.
 
 ## Requirements
 
@@ -104,20 +121,10 @@ Guards, all customizable: `aperture-partial-size`, `aperture-partial-chunk`,
 `aperture-excluded-files`, `aperture-excluded-buffers`. The names shadow consult's on
 purpose.
 
-### The child-frame layout (optional)
+### Using the Posframe/Child-Frame Layout (optional)
 
 `(setq aperture-display 'child-frame)` floats the whole UI — prompt, candidate list and
-preview pane — in a child frame, leaving any pre-existing windows visible behind it.
-
-```
-+-----------------------------------+
-|  your windows untouched           |
-|  +---------------+-------------+  |
-|  | prompt+input  |             |  |
-|  | candidates    |  preview    |  |
-|  +---------------+-------------+  |
-+-----------------------------------+
-```
+preview pane — in a child frame, leaving any pre-existing windows visible behind it (see above).
 
 ```elisp
 (setq aperture-display 'child-frame
@@ -135,31 +142,11 @@ apply: there is no top window, and the frame's size is set directly by
 `aperture-child-frame-width` rather than inherited from a layout you did not choose. A pane
 that still comes out narrow is logged, naming the knob to turn.
 
-**This is not `vertico-posframe` integration.** aperture creates and splits its own child
-frame. If you use `vertico-posframe-mode`, aperture stands down for it per-session and
+This is not `vertico-posframe` integration. `aperture` creates and splits its own child
+frame. If you use `vertico-posframe-mode`, `aperture` stands down for it per-session and
 never touches the global mode, so your other minibuffers are unaffected — but your
 `vertico-posframe-*` settings do not shape an aperture session. It also changes how consult
 preview is targeted; [§3.4b](docs/DESIGN.md) has the mechanism and the tradeoff.
-
-## Preview categories implemented
-
-| Category                                        | Preview information                                                                       |
-|-------------------------------------------------|-------------------------------------------------------------------------------------------|
-| `symbol` `function` `variable` `command` `face` | signature, full docstring, current value                                                  |
-| `file`                                          | file contents, fontified, bounded                                                         |
-| `project-file`                                  | the same, resolved against the project root (`project-find-file`, `projectile-find-file`) |
-| `buffer`                                        | the live buffer itself                                                                    |
-| `package`                                       | version, dependencies, homepage, and the package's own `Commentary`                       |
-| `bookmark`                                      | the target file, centred on the stored position                                           |
-| `kill-ring`                                     | the entire entry                                                                          |
-
-Anything else falls back to no pane at all, which is stock vertico.
-
-Previewing is deliberately careful about what it will not do: it never calls `find-file`
-(so no `find-file-hook`, no LSP client, no file-local variables on every keystroke), never
-reads remote paths, never runs a bookmark handler, and never fetches a package README over
-the network. Files over 1MB are read as a bounded head chunk rather than refused. When a
-guard suppresses a preview, the pane says so and names the variable responsible.
 
 ## With consult
 
@@ -174,7 +161,7 @@ It exists for one defect: during a multi-file search, a hit in a buffer that is 
 visible elsewhere would otherwise preview into that window and leave the pane stale.
 [§3.5c](docs/DESIGN.md).
 
-## Writing a previewer
+## Writing a Previewer
 
 A previewer is a function of one argument — the candidate string — returning `nil`, a
 string, a plist, or (for async) a function taking a callback:
@@ -211,7 +198,7 @@ interception fired, when consult took over. Two failures look identical from the
 session that never activated, and one that activated but laid its windows out wrong — and
 the log is what separates them. Please include it in a bug report.
 
-## Related packages
+## Related Packages
 
 aperture is not a replacement for any of these and works alongside all of them.
 
