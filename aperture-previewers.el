@@ -7,28 +7,23 @@
 ;; A previewer takes a candidate string and returns nil, a string, a plist, or
 ;; a function (async).  See docs/DESIGN.md section 3.3.
 ;;
-;; Cost is declared with the `aperture-cost' symbol property.  It exists for
-;; the fast path: `free' bypasses the debounce entirely, which is the
-;; difference between `M-x' feeling instant and merely feeling fast.
+;; Cost is declared with the `aperture-cost' symbol property: `free' bypasses
+;; the debounce entirely, `expensive' lengthens it.
 
 ;;; Code:
 
 (require 'aperture)
 (require 'help-fns)
 
-;; `package' and `bookmark' are built-in, but each is only reachable once the
-;; user is already completing its own candidates -- by which point the library
-;; is necessarily loaded.  Requiring them lazily keeps `aperture-mode' from
-;; pulling in package.el for a preview that may never be asked for; compiling
-;; against them keeps that free of warnings.
+;; Required lazily so `aperture-mode' does not pull in package.el for a preview
+;; that may never be asked for; compiled against here to stay warning-free.
 (eval-when-compile
   (require 'package)
   (require 'bookmark)
   (require 'lisp-mnt)
   (require 'project))
 
-;; `eval-when-compile' inlines the struct accessors and declares the registry
-;; variables, but the compiler still cannot see plain functions at run time.
+;; `eval-when-compile' does not declare plain functions for run time.
 (declare-function package--from-builtin "package" (bi))
 (declare-function package-version-join "package" (vlist))
 (declare-function package-desc-status "package" (pkg-desc))
@@ -42,7 +37,7 @@
 (declare-function project-root "project" (project))
 (declare-function projectile-project-root "projectile" (&optional dir))
 
-;;;; Symbols -- the flagship
+;;;; Symbols
 
 (defun aperture--symbol-signature (sym)
   "Return a signature line for SYM, or nil."
@@ -53,11 +48,7 @@
                 (if args (format " %s" (mapconcat #'symbol-name args " ")) ""))))))
 
 (defun aperture-preview-symbol (cand)
-  "Preview CAND as a symbol: signature, full docstring, and kind.
-
-This is the case with no existing answer in the ecosystem.  marginalia
-can show a truncated first line; the whole point of the pane is that the
-rest of the docstring has somewhere to go."
+  "Preview CAND as a symbol: signature, full docstring, and kind."
   (when-let* ((sym (intern-soft (substring-no-properties cand))))
     (let* ((parts nil)
            (kind (cond ((commandp sym) "command")
@@ -114,20 +105,18 @@ rest of the docstring has somewhere to go."
 
 (defun aperture--project-root ()
   "Directory that `project-file' candidates are relative to, or nil.
-
 Runs in the minibuffer, whose `default-directory' is inherited from
-wherever completion was started -- stable for the whole session, and
-unaffected by what the pane is currently showing."
+wherever completion was started and is unaffected by what the pane is
+currently showing."
   (or
-   ;; `project-find-file' names the root in its prompt.  That is the root
-   ;; which produced the candidates, so it outranks any re-derivation.
+   ;; `project-find-file' names the root that produced the candidates in its
+   ;; prompt, so it outranks any re-derivation.
    (and (minibufferp)
         (let ((prompt (or (minibuffer-prompt) ""))
               case-fold-search)
           (and (string-match aperture--project-prompt-regexp prompt)
                (match-string 1 prompt))))
-   ;; projectile has its own notion of a root, and its own candidates were
-   ;; generated from it; when projectile is asking, its answer is the one.
+   ;; projectile generated its candidates from its own notion of a root.
    (and (fboundp 'projectile-project-root)
         (ignore-errors (projectile-project-root)))
    (and (fboundp 'project-current)
@@ -136,13 +125,9 @@ unaffected by what the pane is currently showing."
 
 (defun aperture-preview-project-file (cand)
   "Preview CAND, a `project-file' candidate, relative to the project root.
-
-`project-file' candidates are relative to the project root; `file'
-candidates are relative to `default-directory'.  The two coincide exactly
-when completion was started from a buffer sitting at the root, which is
-why using the file previewer for both looks correct in a flat repository
-and fails in every nested one.  Absolute candidates occur too -- project
-directories are reported under this category as well."
+`project-file' candidates are relative to the project root, unlike `file'
+candidates, which are relative to `default-directory'.  Absolute
+candidates occur too: project directories carry this category as well."
   (require 'project nil t)
   (let ((name (substring-no-properties cand)))
     (if (file-name-absolute-p name)
@@ -154,8 +139,8 @@ directories are reported under this category as well."
 
 (defun aperture-preview-buffer (cand)
   "Preview CAND as a live buffer.
-Returns the buffer itself: aperture displays it as-is and never kills a
-buffer it did not create."
+Returns the buffer itself; aperture never kills a buffer it did not
+create."
   (let ((name (substring-no-properties cand)))
     (cond
      ((aperture--excluded-p name aperture-excluded-buffers)
@@ -167,8 +152,7 @@ buffer it did not create."
 ;;;; Kill ring
 
 (defun aperture-preview-kill-ring (cand)
-  "Preview CAND as an entry from the `kill-ring'.
-Multi-line kills are unreadable in a one-line annotation."
+  "Preview CAND as an entry from the `kill-ring'."
   (list :content (substring-no-properties cand)
         :title " kill-ring"))
 
@@ -178,11 +162,9 @@ Multi-line kills are unreadable in a one-line annotation."
 
 (defun aperture--package-desc (name)
   "Return a `package-desc' for the package symbol NAME, or nil.
-
 Reads the three registries directly rather than calling
 `package-get-descriptor', which runs `package-initialize' as a side
-effect -- unacceptable on a keystroke -- and still misses built-ins,
-which are much of what `describe-package' is pointed at."
+effect and still misses built-ins."
   (or (cadr (assq name package-alist))
       (cadr (assq name package-archive-contents))
       (when-let* ((builtin (assq name package--builtins)))
@@ -190,11 +172,9 @@ which are much of what `describe-package' is pointed at."
 
 (defun aperture--package-commentary (desc)
   "Return the Commentary section of DESC's main file, or nil.
-
-Installed packages only.  An uninstalled one has nothing on disk, and its
-long description lives in an archive README that `describe-package' will
-fetch over the network -- which is precisely what a previewer running on
-every selection change must never do."
+Installed packages only: an uninstalled one has nothing on disk, and its
+archive README would have to be fetched over the network, which a
+previewer must never do."
   (when-let* ((dir (package-desc-dir desc))
               ;; `builtin' and `dir' are symbols, not paths.
               ((stringp dir))
@@ -213,11 +193,7 @@ every selection change must never do."
                reqs ", ")))
 
 (defun aperture-preview-package (cand)
-  "Preview CAND as a package: metadata, then its Commentary.
-
-The Commentary is the part worth a pane.  `describe-package' shows it in
-full, marginalia shows the one-line summary; between those two there is
-nothing, and the summary is rarely enough to decide whether to install."
+  "Preview CAND as a package: metadata, then its Commentary."
   (require 'package)
   (require 'lisp-mnt)
   (when-let* ((name (intern-soft (substring-no-properties cand)))
@@ -260,11 +236,9 @@ nothing, and the summary is rarely enough to decide whether to install."
 
 (defun aperture-preview-bookmark (cand)
   "Preview CAND as a bookmark: its target file, centred on the mark.
-
-A bookmark carrying a handler belongs to whichever package created it,
-and the only way to resolve it is to run that handler -- which visits the
-target for real.  Those show their stored record instead, which still
-beats a name with nothing behind it."
+A bookmark carrying a handler can only be resolved by running that
+handler, which visits the target for real; those show their stored record
+instead."
   (require 'bookmark)
   (when-let* ((name (substring-no-properties cand))
               (bmk (bookmark-get-bookmark name 'noerror)))

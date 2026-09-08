@@ -91,6 +91,10 @@ changed*.
   cannot break other packages, and it depends on only two vertico symbols rather than on
   the shape of a function body. Both are internals either way — this is the one
   unavoidable coupling, and it should be isolated in `aperture-vertico.el`.
+- **"Is vertico active here?" must test `vertico--input`, not `vertico--index`.** The
+  index is `defvar-local` with a default of `-1`, which is non-nil, so reading it reports
+  true in *every* minibuffer — including non-vertico ones such as `evil-ex`. Testing
+  `vertico--input` is what vertico's own `vertico--command-p` does.
 
 The core does not know about vertico. It defines a small frontend protocol —
 `active-p`, `current-candidate`, `candidate-index`, `install-hook`, `remove-hook` — and
@@ -635,6 +639,13 @@ a default-on aperture is silent for every command we have not written a previewe
 
 **Escape hatch must be one keystroke**, not a config edit: `aperture-toggle` is bound in
 the minibuffer keymap so a user who hits a pathological case can recover in the moment.
+
+**Session keys go in `minor-mode-overriding-map-alist`, not `use-local-map`.** vertico
+installs its own local map *after* `aperture--setup` runs, so anything set with
+`use-local-map` is clobbered before the user can press it. The overriding alist takes
+precedence over the local map, and keying its entry on `aperture--session` — buffer-local
+to the minibuffer, nil when no session is running — makes the bindings live exactly as
+long as the session, with no teardown step to forget.
 
 ## 4. Built-in previewers
 

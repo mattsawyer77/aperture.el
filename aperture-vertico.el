@@ -4,9 +4,8 @@
 
 ;;; Commentary:
 
-;; Everything aperture knows about vertico lives here.  The core talks to
-;; `aperture-frontend', a plist of three functions, so it stays testable with a
-;; stub and could grow another frontend later.
+;; Everything aperture knows about vertico lives here.  The core talks to it
+;; only through `aperture-frontend', a plist of three functions.
 
 ;;; Code:
 
@@ -27,9 +26,8 @@
   "Non-nil if vertico is active in the current minibuffer.
 
 Tests `vertico--input', matching vertico's own `vertico--command-p'.
-`vertico--index' must NOT be used: it is `defvar-local' with a default
-of -1, which is non-nil, so it reports true in every minibuffer --
-including non-vertico ones such as `evil-ex'."
+`vertico--index' must NOT be used: it is `defvar-local' with a non-nil
+default of -1, so it reports true in every minibuffer."
   (bound-and-true-p vertico--input))
 
 (defun aperture-vertico--candidate ()
@@ -44,12 +42,10 @@ including non-vertico ones such as `evil-ex'."
   "Around advice for `vertico-buffer--setup', calling FN with ARGS.
 
 vertico-buffer picks its window by calling `display-buffer' on a
-throwaway buffer.  A plain `vertico-buffer-display-action' is not
-enough: it can be silently ignored in an opinionated configuration,
-with no error and no diagnostic (docs/DESIGN.md section 3.5b).
-`display-buffer-overriding-action' sits at the top of `display-buffer''s
-precedence chain, so pointing it at the window we already split wins
-regardless of what else the user's config is doing."
+throwaway buffer.  `display-buffer-overriding-action' sits at the top of
+`display-buffer''s precedence chain, so pointing it at the window we
+already split wins regardless of the user's own display actions; a plain
+`vertico-buffer-display-action' can be silently ignored."
   (if-let* ((session aperture--session)
             (win (aperture--session-list-win session))
             ((window-live-p win)))
@@ -59,8 +55,7 @@ regardless of what else the user's config is doing."
                      win))))
         (apply fn args)
         (aperture--log "list   placed in %s" (aperture--log-window win)))
-    ;; Without a session this is stock vertico-buffer, which is why a
-    ;; misplaced list and a session that never started look the same.
+    ;; Without a session this is stock vertico-buffer.
     (aperture--log "list   not placed: %s"
                    (if aperture--session "no live list window" "no session"))
     (apply fn args)))
@@ -68,19 +63,17 @@ regardless of what else the user's config is doing."
 (defun aperture-vertico--posframe-workable-p (fn &rest args)
   "Around advice for `vertico-posframe-mode-workable-p', calling FN with ARGS.
 Report unworkable inside an aperture session, so vertico-posframe stands
-down for those and only those.
-
-Both packages hook `vertico--display-candidates'; run together, the
-candidates overlay binds to aperture's list window and the posframe shows
-a bare prompt.  Per-session on purpose -- turning the global mode off
-would change every other minibuffer the user has -- and sufficient,
-because `cl-defmethod' `&context' re-resolves per call."
+down for those and only those.  Both packages hook
+`vertico--display-candidates'; run together, the candidates overlay binds
+to aperture's list window and the posframe shows a bare prompt.
+Per-session is sufficient because `cl-defmethod' `&context' re-resolves
+per call."
   (and (not (aperture--active-session)) (apply fn args)))
 
 (defun aperture-vertico--suppress-posframe (enable)
   "Install or remove the vertico-posframe stand-down when ENABLE.
-Polled at install time rather than hung off `with-eval-after-load', for
-the same reasons as `aperture--consult-arrange'."
+Polled at install time rather than hung off `with-eval-after-load', as
+in `aperture--consult-arrange'."
   (when (fboundp 'vertico-posframe-mode-workable-p)
     (if enable
         (advice-add 'vertico-posframe-mode-workable-p :around
@@ -95,19 +88,14 @@ the same reasons as `aperture--consult-arrange'."
         (list :active-p #'aperture-vertico--active-p
               :candidate #'aperture-vertico--candidate
               :index #'aperture-vertico--index))
-  ;; Session start hangs off `vertico--setup' rather than
-  ;; `minibuffer-setup-hook'.  `completing-read-default' sets
-  ;; `minibuffer-completion-table' from inside its own setup-hook lambda, so
-  ;; any hook early enough to precede vertico-buffer is also too early to see
-  ;; the completion table.  `vertico--setup' runs after the table is set and
-  ;; before its own `:after' method calls `vertico-buffer--setup', which is
-  ;; the only point satisfying both.
+  ;; `vertico--setup' runs after `minibuffer-completion-table' is set and
+  ;; before its own `:after' method calls `vertico-buffer--setup' -- the only
+  ;; point satisfying both of `aperture--setup''s timing constraints.
   (advice-add 'vertico--setup :before #'aperture--setup)
   (advice-add 'vertico-buffer--setup :around #'aperture-vertico--place-list)
   (aperture-vertico--suppress-posframe t)
-  ;; Both layouts put the candidate list in a window, and getting it there is
-  ;; vertico-buffer's job either way.  Enable it rather than requiring the
-  ;; user to discover that the package does nothing without it.
+  ;; Both layouts put the candidate list in a window, which is
+  ;; vertico-buffer's job; aperture does nothing without it.
   (when (eq aperture-vertico--saved-buffer-mode 'unset)
     (setq aperture-vertico--saved-buffer-mode (bound-and-true-p vertico-buffer-mode)))
   (vertico-buffer-mode 1))

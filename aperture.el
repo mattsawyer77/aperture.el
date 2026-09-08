@@ -3,7 +3,7 @@
 ;; Copyright (C) 2026 Matt Sawyer
 
 ;; Author: Matt Sawyer
-;; Version: 0.3.0
+;; Version: 0.3.1
 ;; Package-Requires: ((emacs "29.1") (vertico "1.7"))
 ;; Keywords: convenience, matching
 ;; URL: https://github.com/mattsawyer77/aperture.el
@@ -11,15 +11,9 @@
 
 ;;; Commentary:
 
-;; `marginalia' annotates each candidate with one line, because the completion
-;; API it implements returns a string appended to the candidate.  That ceiling
-;; is structural.
-;;
-;; aperture adds a second surface: a pane rendering arbitrary, multi-line,
-;; fontified context for the selected candidate, dispatched on the candidate's
-;; completion category, and working for any `completing-read'.
-;;
-;; Layout, and why it is shaped this way:
+;; aperture renders arbitrary, multi-line, fontified context for the selected
+;; completion candidate in a pane, dispatched on the candidate's completion
+;; category, and working for any `completing-read'.
 ;;
 ;;     +---------------------------------------+
 ;;     |  original buffer - stays visible      |
@@ -29,15 +23,11 @@
 ;;     |  minibuffer                           |
 ;;     +---------------------------------------+
 ;;
-;; consult previews into `minibuffer-selected-window'.  Every split therefore
-;; has to leave that window object where we want the pane -- bottom right --
-;; so consult's own preview lands in it with no interception at all.  See
-;; docs/DESIGN.md section 3.4 and 3.5.
+;; The pane is `minibuffer-selected-window', so consult previews into it with
+;; no interception.  `aperture-display' selects a second, opt-in layout that
+;; floats the whole UI in a child frame instead; see `aperture-child-frame.el'.
 ;;
-;; `aperture-display' selects a second, opt-in layout that floats the whole UI
-;; in a child frame instead.  It gives up the invariant above -- the pane
-;; cannot be `minibuffer-selected-window' there -- and pays for it with a
-;; redirect.  See `aperture-child-frame.el' and section 3.4b.
+;; Design notes: docs/DESIGN.md.
 
 ;;; Code:
 
@@ -61,18 +51,13 @@
 (defcustom aperture-key 'any
   "When to update the preview pane.
 
-Grammar deliberately mirrors `consult-preview-key', so that settings
-transfer verbatim:
+Grammar mirrors `consult-preview-key':
 
   nil                     never preview; pane stays closed
   any                     preview on every selection change
   KEY                     preview only when KEY is pressed
   (KEY...)                preview on any of these keys
-  (:debounce SECS any)    preview live, with SECS debounce
-
-Defaults to `any' because the pane is the point of the package; an
-on-demand aperture is not a lighter aperture, it is a worse
-`embark-act'."
+  (:debounce SECS any)    preview live, with SECS debounce"
   :type '(choice (const :tag "Any key" any)
           (list :tag "Debounced" (const :debounce) (float :tag "Seconds")
                 (const any))
@@ -110,12 +95,7 @@ layout that works on a TTY.
 
 `child-frame'\=' floats the whole layout in a child frame over the parent,
 leaving every one of your windows visible behind it.  Needs a graphical
-display; degrades to `window'\=' with a line in the log without one.
-
-Not merely cosmetic: under `window'\=' the pane *is*
-`minibuffer-selected-window', so consult previews into it untouched.
-Under `child-frame'\=' it cannot be, and aperture redirects
-`consult--original-window' instead.  See docs/DESIGN.md section 3.4b."
+display; degrades to `window'\=' with a line in the log without one."
   :type '(choice (const :tag "Split the current window" window)
           (const :tag "Float in a child frame" child-frame)))
 
@@ -127,36 +107,26 @@ An integer is columns; a float is a fraction."
 (defcustom aperture-min-pane-width 40
   "Pane width, in columns, below which aperture will try to get more room.
 
-A trigger, not a guarantee -- the name is shorthand.  When the window
-being split cannot give the pane this many columns *and* deleting that
-window's side-by-side siblings would help, the session takes the whole
-frame instead: those siblings are deleted, the usual splits follow, and
-the previous window configuration is restored when the session ends.
+A trigger, not a guarantee.  When the window being split cannot give the
+pane this many columns *and* deleting that window's side-by-side siblings
+would help, the session takes the whole frame instead: those siblings are
+deleted, the usual splits follow, and the previous window configuration
+is restored when the session ends.
 
 Nothing happens when widening is impossible: a frame that is simply
 narrow, a sole window, or windows stacked above and below rather than
 beside (they are already full width).  In those cases the pane stays as
 narrow as the frame dictates.
 
-This exists because aperture carves its area out of exactly one window,
-and that window is as wide as your layout left it.  On a 200-column frame
-already split into three columns, the pane lands at about 32 columns,
-which is not wide enough to read code in.  Widening it is not possible
-without removing the siblings: the window aperture splits must remain
-`minibuffer-selected-window' or consult previews into the wrong place
-entirely (see `aperture--build-layout'), so it cannot be swapped for a
-roomier one.
-
-Windows carrying the `no-delete-other-windows' parameter -- which is what
-well-behaved sidebars such as treemacs set -- survive regardless.
+Windows carrying the `no-delete-other-windows' parameter, which is what
+sidebars such as treemacs set, survive regardless.
 
 nil disables this and always splits in place, however narrow the result.
 A value at or above your frame width makes it unconditional.
 
 Does not apply when `aperture-display' is `child-frame'\=': that frame's
-size is set directly by `aperture-child-frame-width', so there is no
-foreign layout to rescue the pane from.  A pane that still comes out
-under this width is logged."
+size is set directly by `aperture-child-frame-width'.  A pane that still
+comes out under this width is logged."
   :type '(choice natnum (const :tag "Never take the frame" nil)))
 
 (defcustom aperture-partial-size (* 1024 1024)
@@ -211,17 +181,15 @@ is often more specific than the category."
 aperture opens the pane for these so the geometry is right, then stands
 down and lets consult render into it.
 
-Membership is decided by one test: consult passes a `:state' built on
-`consult--jump-preview' for that category, and aperture has no previewer
-of its own.  Categories consult previews but aperture also handles --
-`file', `buffer', `bookmark', `kill-ring' -- do not belong here; those
-activate on their own previewer and hand over at run time instead, which
-is what `aperture--consult-owns-p' is for.
+An entry belongs here when consult passes a `:state' built on
+`consult--jump-preview' for that category and aperture has no previewer
+of its own.  Categories aperture also handles -- `file', `buffer',
+`bookmark', `kill-ring' -- hand over at run time instead, through
+`aperture--consult-owns-p'.
 
 `imenu' is the one entry a non-consult command can also produce: plain
-`\\[imenu]' is classified into it by marginalia.  The pane then opens
-with nothing to render.  That is judged the lesser cost, because
-`consult-imenu' without a pane previews into the wrong window entirely."
+`\\[imenu]' is classified into it by marginalia, and the pane then opens
+with nothing to render."
   :type '(repeat symbol))
 
 (defcustom aperture-prompt-categories
@@ -235,12 +203,9 @@ matched case-insensitively.  Several built-in commands -- notably
 `completing-read' on a bare list of strings, so their metadata carries
 nothing to dispatch on.
 
-marginalia solves this with its own richer classifier, installed as
-`:before-until' advice on `completion-metadata-get'.  Where marginalia is
-active aperture therefore never reaches this variable at all: the advice
-has already answered.  This exists so the previewers below are not dead
-code for everyone who does not run marginalia, and is deliberately
-limited to categories aperture can actually preview."
+Where marginalia is active its own classifier answers first, through
+`:before-until' advice on `completion-metadata-get', and this variable is
+never reached."
   :type '(alist :key-type regexp :value-type symbol))
 
 (defface aperture-suppressed '((t :inherit shadow))
@@ -250,12 +215,8 @@ limited to categories aperture can actually preview."
 
 (defcustom aperture-debug nil
   "When non-nil, record session activity in `aperture-log-buffer'.
-
-Two very different failures look identical from the outside -- a session
-that never activated, and a session that activated but laid its windows
-out wrong.  Both present as \"the preview is not where I expected\".
-The log separates them, and is the first thing to ask for in a bug
-report.  See `aperture-show-log'."
+Records where a session declined to start and where its windows landed.
+See `aperture-show-log'."
   :type 'boolean)
 
 (defconst aperture-log-buffer "*aperture-log*"
@@ -335,8 +296,7 @@ in a log."
 (defvar aperture-frontend nil
   "Plist describing the active completion frontend.
 Keys `:active-p', `:candidate', `:index', each a function of no
-arguments.  Set by `aperture-vertico'.  The core never references
-vertico directly, which keeps it testable with a stub.")
+arguments.  Set by `aperture-vertico'.")
 
 (defun aperture--frontend (key)
   "Call the frontend function under KEY, or return nil."
@@ -345,11 +305,8 @@ vertico directly, which keeps it testable with a stub.")
 
 (defun aperture--active-session ()
   "Return the session of the innermost active minibuffer, or nil.
-
-`aperture--session' is buffer-local to the minibuffer, but consult runs
-preview inside `with-selected-window' on the pane -- so the current
-buffer there is the previewed one, and the session has to be reached
-through the minibuffer window instead."
+Reached through the minibuffer window rather than the current buffer,
+which during a consult preview is the previewed one."
   (when-let* ((win (active-minibuffer-window))
               (buf (window-buffer win))
               ((buffer-live-p buf)))
@@ -395,7 +352,7 @@ Matched case-insensitively, as marginalia does."
 
 (defun aperture--prompt-category ()
   "Category guessed from the minibuffer prompt, or nil.
-See `aperture-prompt-categories' for why guessing is necessary at all."
+See `aperture-prompt-categories'."
   (when (minibufferp)
     (aperture--classify-prompt (or (minibuffer-prompt) ""))))
 
@@ -611,17 +568,13 @@ WIN, not against the frame."
   "Non-nil if the session should take the frame rather than split WIN.
 See `aperture-min-pane-width'.
 
-Two conditions, and the second is the one that is easy to forget: the
-pane must be too narrow, *and* deleting WIN\='s siblings must be capable
-of doing something about it.  Only siblings placed beside WIN make it
-narrow.  Windows stacked above or below it -- an ordinary
-\[split-window-below] -- are already full width, so taking the frame
-would cost the user their layout and widen the pane by nothing.
+Two conditions: the pane must be too narrow, *and* deleting WIN\='s
+side-by-side siblings must be capable of widening it.  Windows stacked
+above or below WIN are already full width, so they do not count.
 
-`window-total-width\=' rather than `window-width\=', because the frame root
-is an internal window when the frame is split at all, and `window-width\='
-accepts only live windows.  This comparison also subsumes the
-sole-window case, whose width already equals the root\='s."
+`window-total-width\=' rather than `window-width\=': the frame root is an
+internal window whenever the frame is split, and `window-width\=' accepts
+only live windows.  The comparison also subsumes the sole-window case."
   (and aperture-min-pane-width
        (< (aperture--projected-pane-width win) aperture-min-pane-width)
        (< (window-total-width win)
@@ -629,9 +582,7 @@ sole-window case, whose width already equals the root\='s."
        t))
 
 (defun aperture--child-frame-capable-p ()
-  "Non-nil if this Emacs can draw a child frame here.
-`tty-child-frames' is Emacs 31, above the declared floor, so it is
-tested for rather than assumed."
+  "Non-nil if this Emacs can draw a child frame here."
   (and (not noninteractive)
        (or (display-graphic-p)
            (featurep 'tty-child-frames))
@@ -639,9 +590,7 @@ tested for rather than assumed."
 
 (defun aperture--display-mode ()
   "Resolve `aperture-display' against what this display can actually do.
-Returns `window'\=' or `child-frame'\='.  A downgrade is logged, not silent:
-it would otherwise look exactly like a session the user never
-configured."
+Returns `window'\=' or `child-frame'\='.  A downgrade is logged."
   (if (eq aperture-display 'child-frame)
       (if (aperture--child-frame-capable-p)
           'child-frame
@@ -660,10 +609,10 @@ configured."
 (defun aperture--build-window-layout (session)
   "Split the original window into the aperture layout for SESSION.
 
-Ordering is load-bearing.  consult previews into
-`minibuffer-selected-window', so that window object must end up as the
-pane.  Splitting `above' leaves it as the bottom strip; splitting toward
-`aperture-side' leaves it on the pane side."
+Ordering is load-bearing: `minibuffer-selected-window' must end up as the
+pane, so consult previews into it.  Splitting `above' leaves it as the
+bottom strip; splitting toward `aperture-side' leaves it on the pane
+side."
   (let ((orig (minibuffer-selected-window)))
     (if (not (window-live-p orig))
         (aperture--log "layout aborted: no live `minibuffer-selected-window'")
@@ -677,10 +626,8 @@ pane.  Splitting `above' leaves it as the bottom strip; splitting toward
                       (aperture--log
                        "layout taking frame: pane would be %d cols, `aperture-min-pane-width' %d"
                        (aperture--projected-pane-width orig) aperture-min-pane-width)
-                      ;; `delete-other-windows' SELECTS the window it keeps.
-                      ;; The minibuffer is selected while a session is being
-                      ;; built, so without this the user's next keystroke goes
-                      ;; into the previewed buffer instead of the prompt.
+                      ;; `delete-other-windows' SELECTS the window it keeps,
+                      ;; which would take the selection off the minibuffer.
                       (save-selected-window (delete-other-windows orig))
                       (setf (aperture--session-expanded session) t)))
                  (total (window-height orig))
@@ -712,16 +659,13 @@ pane.  Splitting `above' leaves it as the bottom strip; splitting toward
     (ignore-errors (set-window-configuration config))))
 
 (defun aperture--restore (session)
-  "Undo SESSION's layout.  Three cases, because they undo differently:
+  "Undo SESSION's layout.  Three cases:
 
-  - A child-frame session touched nothing outside its frame, so deleting
-    the frame is the whole of it (docs/DESIGN.md section 3.4b).
-  - A session that took the frame (section 3.4a) can only come back from
-    the saved configuration: surgery cannot restore deleted windows.
-  - Otherwise, delete only the windows we created and put the pane's
-    buffer back.  Deliberately more surgical than
-    `set-window-configuration', which would fight vertico-buffer's own
-    teardown.  The saved configuration is kept as a last resort."
+  - A child-frame session: delete the frame, which is all it touched.
+  - A session that took the frame: restore the saved configuration, since
+    surgery cannot bring back deleted windows.
+  - Otherwise: delete only the windows we created and put the pane's
+    buffer back, falling back to the saved configuration."
   (cond
    ((aperture--session-frame session)
     (aperture--log "restore deleting child frame")
@@ -752,8 +696,7 @@ consult itself tests it this way."
 
 (defun aperture--skip-reason (category command)
   "Explain why no pane should open for CATEGORY and COMMAND, or return nil.
-Phrased as a reason rather than a boolean so the log can say which of
-the several ways to do nothing was taken."
+A reason rather than a boolean, so the log can name it."
   (cond
    ((null aperture-key) "`aperture-key' is nil")
    ((null aperture-frontend) "no frontend installed")
@@ -769,11 +712,9 @@ the several ways to do nothing was taken."
 
 (defun aperture--install-keys ()
   "Bind aperture's minibuffer keys for this session.
-
-Uses `minor-mode-overriding-map-alist' rather than `use-local-map':
-vertico installs its own local map after we run, and would clobber
-anything set here.  The entry is keyed on `aperture--session', so the
-bindings are live exactly for the duration of a session."
+Uses `minor-mode-overriding-map-alist', keyed on `aperture--session', so
+the bindings live exactly as long as the session and vertico's own local
+map cannot clobber them."
   (let ((map (make-sparse-keymap))
         (keys (car (aperture--key-normalize aperture-key))))
     (keymap-set map "C-M-v" #'aperture-scroll-up)
@@ -788,23 +729,11 @@ bindings are live exactly for the duration of a session."
 
 (defun aperture--setup (&rest _)
   "Open a session if this minibuffer warrants one.
-
-Timing is a two-sided constraint, and `minibuffer-setup-hook' cannot
-satisfy it at any depth:
-
-  - We must run AFTER `minibuffer-completion-table' is set, or
-    `aperture--category' returns nil and nothing ever activates.
-    `completing-read-default' sets that table inside its own
-    `minibuffer-with-setup-hook' lambda, so a negative-depth hook runs
-    too early.
-  - We must run BEFORE vertico-buffer picks a window, or there is no
-    list window to point it at.
-
-`vertico--setup' sits exactly between the two, which is why the frontend
-installs this as `:before' advice there rather than on a hook."
-  ;; Cheapest reliable point to notice that consult has since been loaded;
-  ;; see `aperture--consult-arrange'.  Before the skip check, so the adapter
-  ;; is installed even for sessions aperture itself declines.
+Must run after `minibuffer-completion-table' is set and before
+vertico-buffer picks a window; the frontend installs it as `:before'
+advice on `vertico--setup', which sits between the two."
+  ;; Before the skip check, so the adapter is installed even for sessions
+  ;; aperture itself declines.
   (aperture--consult-arrange)
   (let* ((category (aperture--category))
          (command this-command)
@@ -838,8 +767,8 @@ installs this as `:before' advice there rather than on a hook."
   "Detect a selection change and schedule a preview."
   (when-let* ((session aperture--session)
               ((aperture--frontend :active-p)))
-    ;; consult drives its own preview from its own post-command hook.  Two
-    ;; packages rendering into one window would fight; stand down.
+    ;; consult drives its own preview from its own post-command hook; stand
+    ;; down rather than render into the same window.
     (let ((owned (aperture--consult-owns-p)))
       (unless (eq owned (aperture--session-consult-owned session))
         (aperture--log "consult %s preview" (if owned "took" "released")))
@@ -887,17 +816,10 @@ installs this as `:before' advice there rather than on a hook."
 
 (defun aperture--consult-arrange ()
   "Install the consult adapter if consult has been loaded.
-
-consult is a soft dependency, so the adapter cannot simply be required,
-and the obvious `with-eval-after-load' is worse than it looks: those
-entries accumulate, are never removed, and outlive `aperture-mode' being
-turned off -- which forces the hook body to re-check the mode, and leaves
-enable and disable asymmetric.
-
-Polling instead, from `aperture--setup', costs one `featurep' per
-completion session.  `require' on a loaded feature is the same test
-again, and `advice-add' will not add the same advice twice, so calling
-this repeatedly is free and toggling the mode is exactly reversible."
+Polled from `aperture--setup' rather than hung off `with-eval-after-load',
+whose entries would outlive `aperture-mode'.  Calling this repeatedly is
+free: `require' on a loaded feature is a no-op, and `advice-add' will not
+add the same advice twice."
   (when (featurep 'consult)
     (require 'aperture-consult)
     (aperture-consult-install)))
@@ -911,14 +833,12 @@ this repeatedly is free and toggling the mode is exactly reversible."
         (require 'aperture-previewers)
         (require 'aperture-vertico)
         (aperture--log "--- aperture-mode enabled (emacs %s) ---" emacs-version)
-        ;; Session start is installed by the frontend, not here: it has to
-        ;; happen at a point only the frontend knows about.  See
+        ;; Session start is installed by the frontend; see
         ;; `aperture-vertico-install'.
         (aperture-vertico-install)
         (aperture--consult-arrange)
-        ;; Late, so vertico-buffer restores its own state before we undo ours.
-        ;; It also puts us after consult, whose own exit hook runs at depth 0:
-        ;; consult resets its preview while the pane still exists, then we take
+        ;; Late, so vertico-buffer restores its own state and consult resets
+        ;; its preview -- both while the pane still exists -- before we take
         ;; the layout down.
         (add-hook 'minibuffer-exit-hook #'aperture--teardown 90))
     (remove-hook 'minibuffer-exit-hook #'aperture--teardown)
