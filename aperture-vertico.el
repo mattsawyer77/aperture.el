@@ -38,6 +38,20 @@ default of -1, so it reports true in every minibuffer."
   "Current vertico selection index."
   (bound-and-true-p vertico--index))
 
+(defun aperture-vertico--setup (fn &rest args)
+  "Build an aperture session, then run Vertico in the minibuffer buffer.
+
+This must be one `:around' advice rather than independent `:before' and
+`:around' advice.  Child-frame construction can switch `current-buffer';
+restoring it here guarantees Vertico's primary method creates its local
+overlays after Aperture has built the layout."
+  (aperture--setup)
+  (aperture--call-in-active-minibuffer
+   (lambda ()
+     (prog1 (apply fn args)
+       (when-let* ((session aperture--session))
+         (aperture--collapse-parent-minibuffer session))))))
+
 (defun aperture-vertico--place-list (fn &rest args)
   "Around advice for `vertico-buffer--setup', calling FN with ARGS.
 
@@ -91,7 +105,7 @@ in `aperture--consult-arrange'."
   ;; `vertico--setup' runs after `minibuffer-completion-table' is set and
   ;; before its own `:after' method calls `vertico-buffer--setup' -- the only
   ;; point satisfying both of `aperture--setup''s timing constraints.
-  (advice-add 'vertico--setup :before #'aperture--setup)
+  (advice-add 'vertico--setup :around #'aperture-vertico--setup)
   (advice-add 'vertico-buffer--setup :around #'aperture-vertico--place-list)
   (aperture-vertico--suppress-posframe t)
   ;; Both layouts put the candidate list in a window, which is
@@ -103,7 +117,7 @@ in `aperture--consult-arrange'."
 (defun aperture-vertico-uninstall ()
   "Remove the vertico frontend and restore prior state."
   (setq aperture-frontend nil)
-  (advice-remove 'vertico--setup #'aperture--setup)
+  (advice-remove 'vertico--setup #'aperture-vertico--setup)
   (advice-remove 'vertico-buffer--setup #'aperture-vertico--place-list)
   (aperture-vertico--suppress-posframe nil)
   (unless (eq aperture-vertico--saved-buffer-mode 'unset)

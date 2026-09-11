@@ -287,7 +287,7 @@ in a log."
 
 (cl-defstruct (aperture--session (:constructor aperture--session-make)
                                  (:copier nil))
-  pane pane-buffer list-win top-win config expanded frame
+  pane pane-buffer list-win top-win config expanded frame minibuffer-overlay
   (generation 0) timer cancel last-key previewer consult-owned buffers)
 
 (defvar-local aperture--session nil
@@ -311,6 +311,20 @@ which during a consult preview is the previewed one."
               (buf (window-buffer win))
               ((buffer-live-p buf)))
     (buffer-local-value 'aperture--session buf)))
+
+(defun aperture--call-in-active-minibuffer (fn &rest args)
+  "Call FN with ARGS while the active minibuffer buffer is current.
+
+Aperture creates a child frame while Vertico is setting up.  Some Emacs
+builds let that creation change `current-buffer' to the source buffer,
+although the active minibuffer is unchanged.  Callers that install or
+read minibuffer-local state use this to retain the correct context."
+  (if-let* ((win (active-minibuffer-window))
+            (buf (window-buffer win))
+            ((buffer-live-p buf)))
+      (with-current-buffer buf
+        (apply fn args))
+    (apply fn args)))
 
 ;;;; Preview key grammar
 
@@ -653,6 +667,43 @@ side."
          (aperture--restore session)
          nil)))))
 
+(defun aperture--hide-parent-minibuffer (session win)
+  "Hide WIN's buffer in WIN while SESSION displays it in a child frame."
+  (with-current-buffer (window-buffer win)
+    ;; Input is inserted at `point-max'.  Pass REAR-ADVANCE to
+    ;; `make-overlay' itself so its rear endpoint follows every keypress.
+    (let ((overlay (make-overlay (point-min) (point-max) nil nil t)))
+      (overlay-put overlay 'window win)
+      (overlay-put overlay 'display "")
+      (setf (aperture--session-minibuffer-overlay session) overlay))))
+
+(defun aperture--collapse-parent-minibuffer (session)
+  "Hide the parent miniwindow while SESSION displays it in a child frame.
+
+Normally `vertico-buffer--redisplay' performs this when its candidate
+overlay is initialized.  Some Emacs builds lose that overlay while a child
+frame is made, leaving the same minibuffer buffer visible twice.  The child
+frame already shows the buffer, so collapse only its parent miniwindow.
+Returns non-nil when the resize was requested."
+  (when (aperture--session-frame session)
+    (when-let* ((win (active-minibuffer-window))
+                ((window-live-p win)))
+      (let ((before (window-pixel-height win)))
+        (condition-case err
+            (progn
+              (window-resize win (- before) nil nil 'pixelwise)
+              ;; This build clamps the miniwindow at one line (14px).  A
+              ;; window-specific display overlay then hides that residual
+              ;; line without affecting the same buffer in the child frame.
+              (set-window-vscroll win before)
+              (aperture--hide-parent-minibuffer session win)
+              (aperture--log "minibuf collapse %dpx -> %dpx, vscroll=%d" before
+                             (window-pixel-height win) before)
+              t)
+          (error
+           (aperture--log "minibuf collapse failed at %dpx: %S" before err)
+           nil))))))
+
 (defun aperture--restore-config (session)
   "Restore SESSION's saved window configuration, if it has one."
   (when-let* ((config (aperture--session-config session)))
@@ -669,6 +720,8 @@ side."
   (cond
    ((aperture--session-frame session)
     (aperture--log "restore deleting child frame")
+    (when-let* ((overlay (aperture--session-minibuffer-overlay session)))
+      (delete-overlay overlay))
     (let ((frame (aperture--session-frame session)))
       (when (frame-live-p frame) (ignore-errors (delete-frame frame)))))
    ((aperture--session-expanded session)
@@ -741,13 +794,26 @@ advice on `vertico--setup', which sits between the two."
     (if reason
         (aperture--log "setup  cmd=%s cat=%s -- no session: %s"
                        command category reason)
-      (let ((session (aperture--session-make
-                      :previewer (aperture--previewer-for category command))))
+      (let* ((session (aperture--session-make
+                       :previewer (aperture--previewer-for category command)))
+             ;; A child-frame `make-frame' may change `current-buffer' on
+             ;; some Emacs builds.  Session state, keys and hooks belong to
+             ;; the buffer owning this minibuffer, regardless of that side
+             ;; effect.
+             (minibuffer-buffer
+              (or (when-let* ((win (active-minibuffer-window))
+                              (buf (window-buffer win)))
+                    buf)
+                  (current-buffer))))
         (aperture--log "setup  cmd=%s cat=%s previewer=%s"
                        command category
                        (or (aperture--session-previewer session)
                            "none (consult category)"))
         (when (aperture--build-layout session)
+          ;; `make-frame' may have switched `current-buffer'; leave the
+          ;; following Vertico methods in the active minibuffer's context.
+          ;; `set-buffer' preserves the selected minibuffer window.
+          (set-buffer minibuffer-buffer)
           (setq aperture--session session)
           (aperture--install-keys)
           (add-hook 'post-command-hook #'aperture--post-command nil t))))))

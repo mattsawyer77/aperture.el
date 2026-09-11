@@ -610,6 +610,69 @@ would survive the mode being turned off."
           (should (= installed 2)))
       (setq features (delq 'consult features)))))
 
+;;;; Session setup
+
+(ert-deftest aperture-test-parent-minibuffer-overlay-is-window-local ()
+  "Suppressing the parent miniwindow must not alter the child list window."
+  (let* ((buf (generate-new-buffer " *aperture minibuffer overlay*"))
+         (win (selected-window))
+         (saved-buffer (window-buffer win))
+         (session (aperture--session-make :frame 'child-frame)))
+    (unwind-protect
+        (progn
+          (set-window-buffer win buf)
+          (aperture--hide-parent-minibuffer session win)
+          (let ((overlay (aperture--session-minibuffer-overlay session)))
+            (should (overlayp overlay))
+            (should (eq (overlay-get overlay 'window) win))
+            (should (eq (overlay-get overlay 'display) ""))
+            (with-current-buffer buf
+              (goto-char (point-max))
+              (insert "typed input")
+              (should (= (overlay-end overlay) (point-max))))))
+      (set-window-buffer win saved-buffer)
+      (kill-buffer buf))))
+
+(ert-deftest aperture-test-setup-pins-state-to-minibuffer-after-layout-switches-buffer ()
+  "Child-frame creation may change `current-buffer' during layout setup.
+The active minibuffer must nevertheless own the session and its local hooks."
+  (let ((minibuffer-buffer (generate-new-buffer " *aperture minibuffer*"))
+        (source-buffer (generate-new-buffer " *aperture source*"))
+        (win (selected-window))
+        (saved-buffer (window-buffer (selected-window)))
+        (aperture-debug nil)
+        (aperture-key 'any)
+        (aperture-frontend '(:active-p ignore :candidate ignore :index ignore))
+        (aperture-previewer-registry '((test . ignore)))
+        (this-command 'aperture-test-command))
+    (unwind-protect
+        (progn
+          (set-window-buffer win minibuffer-buffer)
+          (cl-letf (((symbol-function 'aperture--consult-arrange) #'ignore)
+                    ((symbol-function 'active-minibuffer-window) (lambda () win))
+                    ((symbol-function 'aperture--category) (lambda () 'test))
+                    ;; Model the mac-port behavior under investigation: frame
+                    ;; construction changes the current buffer before returning.
+                    ((symbol-function 'aperture--build-layout)
+                     (lambda (_session) (set-buffer source-buffer) t)))
+            (set-buffer source-buffer)
+            (aperture--setup)
+            (should (eq (current-buffer) minibuffer-buffer))
+            (with-current-buffer minibuffer-buffer
+              (should (aperture--session-p aperture--session))
+              (should (memq #'aperture--post-command post-command-hook)))
+            (should-not (aperture--collapse-parent-minibuffer
+                         (buffer-local-value 'aperture--session minibuffer-buffer)))
+            (with-current-buffer source-buffer
+              (should-not (local-variable-p 'aperture--session))
+              (should-not (memq #'aperture--post-command post-command-hook)))
+            ;; Returning with this buffer current is what lets Vertico's
+            ;; following setup method create its overlay in the minibuffer.
+            (should (eq (current-buffer) minibuffer-buffer))))
+      (set-window-buffer win saved-buffer)
+      (kill-buffer minibuffer-buffer)
+      (kill-buffer source-buffer))))
+
 ;;;; Logging
 
 (ert-deftest aperture-test-log-is-inert-when-disabled ()

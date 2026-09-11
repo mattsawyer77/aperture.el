@@ -122,6 +122,12 @@ wanting a minibuffer of its own -- and is the property B3 is testing."
                            (if (eq inside-frame f) "child" "PARENT -- redirect impossible"))))
     (spike-check "A5 selected frame restored afterwards"
                  (eq (selected-frame) spike-parent))
+
+    ;; Work around the build's broken restoration so later independent probes
+    ;; begin from the intended parent-frame state.
+    (select-frame-set-input-focus spike-parent)
+    (select-window spike-orig-win)
+
     ;; A6: get-buffer-window has no ALL-FRAMES arg in consult--jump-ensure-buffer
     ;; (consult.el:1573), so from inside the child frame it must not see the
     ;; parent's window showing the same buffer.  That is what would make
@@ -215,27 +221,68 @@ wanting a minibuffer of its own -- and is the property B3 is testing."
 
 (defvar spike-session nil)
 
+(defun spike-c-with-minibuffer-buffer (fn &rest args)
+  "Call FN with ARGS while the active minibuffer buffer is current.
+
+Emacs normally invokes `vertico--setup' with that buffer current.  This
+probe tests whether an Emacs build preserves that invariant: both the
+buffer-local session marker installed by `spike-c-setup' and Vertico's
+later `vertico-buffer--setup' must see the same buffer."
+  (if-let* ((win (active-minibuffer-window))
+            (buf (window-buffer win)))
+      (with-current-buffer buf
+        (spike-log "C0 current=%s minibuffer=%s eq=%s"
+                   (buffer-name (current-buffer)) (buffer-name buf)
+                   (eq (current-buffer) buf))
+        (apply fn args))
+    (apply fn args)))
+
 (defun spike-c-setup (&rest _)
   "Build the child-frame layout for this minibuffer.
 Mirrors `aperture--setup': :before advice on `vertico--setup', which is
 after `minibuffer-completion-table' is set and before vertico-buffer
 picks its window."
-  (setq spike-parent (window-frame (minibuffer-window))
-        spike-orig-win (minibuffer-selected-window))
-  (when (window-live-p spike-orig-win)
-    (spike-make-frame spike-parent)
-    (setq-local spike-session t)
-    (add-hook 'minibuffer-exit-hook #'spike-c-teardown 90 t)))
+  (let* ((minibuffer (active-minibuffer-window))
+         ;; `make-frame' may change the current buffer on some builds.  Keep
+         ;; session state on the buffer that owns the active minibuffer, not
+         ;; whichever buffer happens to become current during frame creation.
+         (minibuffer-buffer (and minibuffer (window-buffer minibuffer))))
+    (setq spike-parent (window-frame (minibuffer-window))
+          spike-orig-win (minibuffer-selected-window))
+    (spike-log "C1 current=%s active-minibuffer=%s original=%s"
+               (buffer-name (current-buffer))
+               (and minibuffer-buffer (buffer-name minibuffer-buffer))
+               spike-orig-win)
+    (when (window-live-p spike-orig-win)
+      (spike-make-frame spike-parent)
+      (when (buffer-live-p minibuffer-buffer)
+        (with-current-buffer minibuffer-buffer
+          (setq-local spike-session t)
+          (add-hook 'minibuffer-exit-hook #'spike-c-teardown 90 t)
+          (spike-log "C2 session=%s buffer=%s list=%s"
+                     spike-session (buffer-name (current-buffer)) spike-list-win))))))
 
 (defun spike-c-teardown ()
   (setq spike-session nil)
   (spike-kill-frame))
 
+(defun spike-with-active-minibuffer (fn)
+  "Call FN with the active minibuffer buffer current, if one exists."
+  (when-let* ((win (active-minibuffer-window))
+              (buf (window-buffer win)))
+    (with-current-buffer buf
+      (funcall fn))))
+
 (defun spike-c-place-list (fn &rest args)
   "Around `vertico-buffer--setup': force the list into the child frame."
+  (spike-log "C3 current=%s session=%S list-live=%s"
+             (buffer-name (current-buffer)) spike-session
+             (window-live-p spike-list-win))
   (if (and spike-session (window-live-p spike-list-win))
       (let ((display-buffer-overriding-action
              (list (lambda (buffer _alist)
+                     (spike-log "C4 placing buffer=%s in %s"
+                                (buffer-name buffer) spike-list-win)
                      (set-window-buffer spike-list-win buffer)
                      spike-list-win))))
         (apply fn args))
@@ -254,6 +301,10 @@ This is the single chokepoint -- every consult preview path runs inside
 
 (defun spike-install ()
   "Install the prototype.  Called at startup."
+  ;; Keep the `:before' layout hook and Vertico's `:after' buffer method in
+  ;; the active minibuffer's buffer context, even on builds that do not do so
+  ;; themselves.  This is deliberately around the complete generic call.
+  (advice-add 'vertico--setup :around #'spike-c-with-minibuffer-buffer)
   (advice-add 'vertico--setup :before #'spike-c-setup)
   (advice-add 'vertico-buffer--setup :around #'spike-c-place-list)
   (when (fboundp 'consult--original-window)
@@ -289,8 +340,11 @@ This is the single chokepoint -- every consult preview path runs inside
            (condition-case e
                (let* ((mbwin (active-minibuffer-window))
                       (mb (window-buffer mbwin))
-                      (ov-win (and (overlayp vertico--candidates-ov)
-                                   (overlay-get vertico--candidates-ov 'window)))
+                      ;; This timer runs after child-frame creation, which may
+                      ;; have made another buffer current.  Vertico's overlay
+                      ;; is buffer-local to MB, so read it from MB explicitly.
+                      (ov (buffer-local-value 'vertico--candidates-ov mb))
+                      (ov-win (and (overlayp ov) (overlay-get ov 'window)))
                       (lbuf (and (window-live-p spike-list-win)
                                  (window-buffer spike-list-win))))
                  (spike-check "D1 child frame live and visible mid-session"
@@ -359,11 +413,22 @@ This is the single chokepoint -- every consult preview path runs inside
           (run-with-timer
            0.4 nil
            (lambda ()
-             (ignore-errors
-               (insert "needle-150")
-               (when (fboundp 'vertico--exhibit) (vertico--exhibit))
-               (when (bound-and-true-p consult--preview-function)
-                 (funcall consult--preview-function)))))
+             ;; Timers run in whichever buffer was current when scheduled;
+             ;; after child-frame creation that can be the source buffer, not
+             ;; the minibuffer.  Consult's preview function is buffer-local,
+             ;; so drive it from the actual active minibuffer.
+             (spike-with-active-minibuffer
+              (lambda ()
+                (spike-log "E0 current=%s preview=%s"
+                           (buffer-name (current-buffer))
+                           (bound-and-true-p consult--preview-function))
+                (condition-case e
+                    (progn
+                      (insert "needle-150")
+                      (when (fboundp 'vertico--exhibit) (vertico--exhibit))
+                      (when consult--preview-function
+                        (funcall consult--preview-function)))
+                  (error (spike-log "FAIL  E0 preview signalled: %S" e)))))))
           (run-with-timer
            1.6 nil
            (lambda ()

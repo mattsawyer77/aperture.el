@@ -76,7 +76,7 @@ try-child-frame:
 # purpose: child frames need a display, which is also why nothing here can run
 # in CI.  Unlike `try', this must NOT use -nw.
 spike:
-	@$(EMACS) -Q $(NEWER) -L . $(DEPS) -l dev/spike-posframe.el
+	$(EMACS) -Q $(NEWER) -L . $(DEPS) -l dev/spike-posframe.el
 
 clean:
 	@rm -f *.elc test/*.elc
