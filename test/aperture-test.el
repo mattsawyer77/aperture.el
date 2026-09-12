@@ -707,6 +707,34 @@ full width under 80.  Regression test for that."
         (let ((aperture-min-pane-width min-pane))
           (should (equal (nth 2 (aperture-child-frame--geometry nil)) 600)))))))
 
+(ert-deftest aperture-test-child-frame-make-runs-no-frame-hooks ()
+  "Making the frame must not run `after-make-frame-functions'.
+On NS, term/ns-win.el puts `select-frame' there, which selected the child
+frame mid-`vertico--setup' and moved `current-buffer' out of the
+minibuffer: vertico's locals and the session landed in the source buffer
+and the frame was never deleted.  Regression test for that."
+  (require 'aperture-child-frame)
+  (let ((after-make-frame-functions (list #'select-frame))
+        (aperture-child-frame-width 0.5)
+        (aperture-child-frame-height 0.5)
+        (aperture-child-frame-position 'center)
+        (hooks-at-make 'unset))
+    (cl-letf (((symbol-function 'frame-pixel-width) (lambda (&rest _) 1000))
+              ((symbol-function 'frame-pixel-height) (lambda (&rest _) 800))
+              ((symbol-function 'frame-char-width) (lambda (&rest _) 10))
+              ((symbol-function 'frame-char-height) (lambda (&rest _) 20))
+              ((symbol-function 'make-frame)
+               (lambda (&rest _)
+                 (setq hooks-at-make after-make-frame-functions)
+                 'fake-frame))
+              ((symbol-function 'set-frame-size) #'ignore)
+              ((symbol-function 'set-frame-position) #'ignore)
+              ((symbol-function 'make-frame-visible) #'ignore))
+      (should (eq (aperture-child-frame--make nil) 'fake-frame))
+      (should (null hooks-at-make))
+      ;; The binding is scoped to frame creation, not leaked.
+      (should (equal after-make-frame-functions (list #'select-frame))))))
+
 (ert-deftest aperture-test-child-frame-width-in-columns ()
   "An integer `aperture-child-frame-width' is columns, not pixels."
   (require 'aperture-child-frame)

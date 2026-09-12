@@ -109,6 +109,15 @@ for fonts, fringes, `alpha' and the like."
   "Create and show the aperture child frame over PARENT."
   (pcase-let* ((`(,x ,y ,w ,h) (aperture-child-frame--geometry parent))
                (frame-resize-pixelwise t)
+               ;; Load-bearing.  The minibuffer window must stay selected, and
+               ;; its buffer current, for the rest of `vertico--setup'.  On NS,
+               ;; term/ns-win.el puts `select-frame' on this hook, so without
+               ;; this the new frame is selected and `current-buffer' follows it
+               ;; to whatever its root window shows: vertico's locals, the
+               ;; session and its exit hook all land in the wrong buffer.  Hooks
+               ;; here are meant for real frames anyway; posframe binds this to
+               ;; nil for the same reason.
+               (after-make-frame-functions nil)
                (frame
                 (make-frame
                  (append

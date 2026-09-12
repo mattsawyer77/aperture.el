@@ -57,6 +57,8 @@ wanting a minibuffer of its own -- and is the property B3 is testing."
          (w (round (* fw 0.86)))
          (h (round (* fh 0.62)))
          (frame-resize-pixelwise t)
+         ;; On NS this hook holds `select-frame'; see `aperture-child-frame--make'.
+         (after-make-frame-functions nil)
          (f (make-frame
              `((parent-frame . ,parent)
                (minibuffer . ,(minibuffer-window parent))

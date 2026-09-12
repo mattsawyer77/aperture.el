@@ -404,12 +404,21 @@ logs a too-narrow pane, naming the knob to raise.
 - **It is a redirect.** One function rather than many, but still aperture reaching into
   consult rather than arranging geometry and standing back, which is what §3.5 chose. The
   window layout keeps that property; this one trades it away deliberately.
-- **Verified on emacs-mac 30.2.50 / macOS only.** X and pgtk child frames have diverged
-  historically.
+- **Verified on macOS only**: emacs-mac 30.2.50, and NS 30.2 and 31.1. X and pgtk child
+  frames have diverged historically.
 
-Two traps found the hard way, both now invariants in TODO.md: `abort-recursive-edit`
-arrives as a `quit` signal, which `ignore-errors` does not catch; and
-`minibuffer-selected-window` is nil inside any `with-selected-window`, on any frame.
+Three traps found the hard way, all now invariants in TODO.md: `abort-recursive-edit`
+arrives as a `quit` signal, which `ignore-errors` does not catch;
+`minibuffer-selected-window` is nil inside any `with-selected-window`, on any frame; and
+**`make-frame` must run with `after-make-frame-functions` bound to nil**. The NS port's
+term/ns-win.el puts `select-frame` on that hook, so the child frame was selected in the
+middle of `vertico--setup` and `current-buffer` followed it to the frame's root window.
+vertico's locals, the session and the exit hook all landed in the source buffer, the list
+showed the source buffer, and teardown never found the frame to delete. emacs-mac loads
+mac-win.el instead, which is why the spike passed there and the layout broke on moving to
+NS Emacs 31. Every symptom was downstream of the selection; patching `current-buffer`
+back afterwards leaves the child frame selected. posframe binds the hook to nil for the
+same reason.
 
 ### 3.5 consult coexistence — **RESOLVED** (source reading, confirmed on hardware in §3.5a)
 
