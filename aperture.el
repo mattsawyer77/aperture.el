@@ -38,6 +38,7 @@
 (declare-function aperture-vertico-uninstall "aperture-vertico")
 (declare-function aperture-consult-install "aperture-consult")
 (declare-function aperture-child-frame--build "aperture-child-frame")
+(declare-function aperture-child-frame-uninstall "aperture-child-frame")
 (declare-function aperture-consult-uninstall "aperture-consult")
 (defvar consult--preview-function)
 
@@ -845,7 +846,9 @@ add the same advice twice."
     (when (fboundp 'aperture-vertico-uninstall)
       (aperture-vertico-uninstall))
     (when (featurep 'aperture-consult)
-      (aperture-consult-uninstall))))
+      (aperture-consult-uninstall))
+    (when (featurep 'aperture-child-frame)
+      (aperture-child-frame-uninstall))))
 
 (provide 'aperture)
 ;;; aperture.el ends here

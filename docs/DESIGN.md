@@ -407,6 +407,34 @@ logs a too-narrow pane, naming the knob to raise.
 - **Verified on macOS only**: emacs-mac 30.2.50, and NS 30.2 and 31.1. X and pgtk child
   frames have diverged historically.
 
+**which-key opens inside the frame** (`aperture-child-frame-which-key`, default on). Field
+report: a prefix key typed during a session opened the which-key popup on the parent,
+underneath the child frame, readable only when the frame was short enough to clear it. The
+cause is the property that makes this layout work: the child frame never takes focus and
+borrows the parent's minibuffer, so the parent stays the selected frame, and which-key both
+sizes its side window (`which-key--height-or-percentage-to-height`) and places it
+(`display-buffer-in-side-window`, or Doom's replacement, which reads `(selected-frame)`
+directly) against the selected frame. The fix is `:around` advice that runs
+`which-key--create-buffer-and-show` and `which-key--show-page` — the paging commands call
+the second directly — under `with-selected-frame` on the session's frame. That is the same
+frame switch consult preview already makes, so the minibuffer finding above covers it. Two
+details carry weight:
+
+- **`current-buffer` is held across the switch.** Selecting a frame makes its selected
+  window's buffer current, and which-key reads the bindings to show from the current
+  buffer's keymaps. Without the hold it would silently list the list or pane buffer's keys
+  — the NS trap below in miniature. Invariant 13 in TODO.md.
+- **Hiding needs no advice.** `quit-windows-on` with a nil FRAME searches every frame; its
+  FRAME argument is inverted relative to the other `window-list` functions. Deleting the
+  side window hands its lines back to the list and pane.
+
+Scoped to the `side-window` and `custom` popup types. Under `frame`, which-key redirects
+focus from its new frame to the selected one, which here would be the child frame; not worth
+the risk for a type that already floats above everything. The alternative was to move or
+shrink the child frame clear of a parent-side popup; rejected because the frame would jump
+on every idle prefix key and re-lay out its windows each time. Hardware check owed
+(TODO.md).
+
 Three traps found the hard way, all now invariants in TODO.md: `abort-recursive-edit`
 arrives as a `quit` signal, which `ignore-errors` does not catch;
 `minibuffer-selected-window` is nil inside any `with-selected-window`, on any frame; and
@@ -804,6 +832,7 @@ aperture-child-frame-height            ; parent fraction, or lines
 aperture-child-frame-position          ; 'center | 'top | (X . Y) | function
 aperture-child-frame-border-width      ; 0 for none
 aperture-child-frame-parameters        ; extra frame parameters, applied last
+aperture-child-frame-which-key         ; t (default): which-key popup inside the frame
 ```
 
 Naming deliberately shadows consult's (`consult-preview-partial-size`,

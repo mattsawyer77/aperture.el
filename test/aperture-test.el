@@ -776,5 +776,100 @@ and the frame was never deleted.  Regression test for that."
       (aperture--restore session))
     (should (eq deleted 'not-a-live-frame))))
 
+;;;; which-key in the child frame
+
+;; The popup itself needs a real child frame (TODO.md).  What batch can reach
+;; is the decision, installation, and the one thing the advice must not
+;; disturb: the current buffer, whose keymaps which-key reads.
+
+(defvar which-key-popup-type)
+
+(defmacro aperture-test--with-child-session (frame &rest body)
+  "Run BODY as though a session drawn in FRAME were active."
+  (declare (indent 1) (debug t))
+  `(let ((session (aperture--session-make :frame ,frame)))
+     (cl-letf (((symbol-function 'aperture--active-session) (lambda () session)))
+       ,@body)))
+
+(ert-deftest aperture-test-which-key-targets-the-child-frame ()
+  (require 'aperture-child-frame)
+  (let ((aperture-child-frame-which-key t))
+    (dolist (type '(side-window custom))
+      (let ((which-key-popup-type type))
+        (aperture-test--with-child-session (selected-frame)
+          (should (eq (aperture-child-frame--which-key-frame) (selected-frame))))))))
+
+(ert-deftest aperture-test-which-key-left-alone-otherwise ()
+  (require 'aperture-child-frame)
+  (let ((aperture-child-frame-which-key t)
+        (which-key-popup-type 'side-window))
+    (should-not (aperture-child-frame--which-key-frame))
+    ;; A window-layout session has no frame.
+    (aperture-test--with-child-session nil
+      (should-not (aperture-child-frame--which-key-frame)))
+    (aperture-test--with-child-session (selected-frame)
+      (dolist (type '(frame minibuffer nil))
+        (let ((which-key-popup-type type))
+          (should-not (aperture-child-frame--which-key-frame))))
+      (let ((aperture-child-frame-which-key nil))
+        (should-not (aperture-child-frame--which-key-frame))))))
+
+(ert-deftest aperture-test-which-key-advice-keeps-the-current-buffer ()
+  "Invariant 13: which-key must still read the minibuffer's keymaps.
+Batch has one frame, so `select-frame' is stubbed to do what a real
+switch does: make the frame's selected window's buffer current."
+  (require 'aperture-child-frame)
+  (let ((buf (generate-new-buffer " *aperture-test-minibuffer*")))
+    (unwind-protect
+        (cl-letf (((symbol-function 'aperture-child-frame--which-key-frame)
+                   #'selected-frame)
+                  ((symbol-function 'select-frame)
+                   (lambda (frame &optional _norecord)
+                     (set-buffer (window-buffer (frame-selected-window frame)))
+                     frame)))
+          (should-not (eq (window-buffer (selected-window)) buf))
+          (with-current-buffer buf
+            (should (equal (aperture-child-frame--which-key-in-frame
+                            (lambda (&rest args) (cons (current-buffer) args))
+                            1 2)
+                           (list buf 1 2)))))
+      (kill-buffer buf))))
+
+(ert-deftest aperture-test-which-key-advice-passes-through ()
+  (require 'aperture-child-frame)
+  (cl-letf (((symbol-function 'aperture-child-frame--which-key-frame) #'ignore))
+    (should (equal (aperture-child-frame--which-key-in-frame #'list 1 2) '(1 2)))))
+
+(ert-deftest aperture-test-which-key-adapter-not-installed-without-which-key ()
+  (require 'aperture-child-frame)
+  (skip-unless (not (aperture-child-frame--which-key-loaded-p)))
+  (aperture-child-frame-install)
+  (dolist (fn aperture-child-frame--which-key-functions)
+    (should-not (advice-member-p #'aperture-child-frame--which-key-in-frame fn))))
+
+(ert-deftest aperture-test-which-key-adapter-installs-and-uninstalls ()
+  "Installed once which-key is loaded, repeatably; removed cleanly."
+  (require 'aperture-child-frame)
+  (unwind-protect
+      (cl-letf (((symbol-function 'aperture-child-frame--which-key-loaded-p)
+                 (lambda () t)))
+        (aperture-child-frame-install)
+        (aperture-child-frame-install)
+        (dolist (fn aperture-child-frame--which-key-functions)
+          (should (advice-member-p #'aperture-child-frame--which-key-in-frame fn)))
+        (aperture-child-frame-uninstall)
+        (dolist (fn aperture-child-frame--which-key-functions)
+          (should-not (advice-member-p #'aperture-child-frame--which-key-in-frame fn))))
+    (aperture-child-frame-uninstall)))
+
+(ert-deftest aperture-test-mode-off-removes-the-which-key-adapter ()
+  (require 'aperture-child-frame)
+  (let ((removed nil))
+    (cl-letf (((symbol-function 'aperture-child-frame-uninstall)
+               (lambda () (setq removed t))))
+      (let ((aperture-mode t))
+        (aperture-mode -1)))
+    (should removed)))
+
 (provide 'aperture-test)
 ;;; aperture-test.el ends here

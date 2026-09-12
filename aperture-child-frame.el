@@ -16,7 +16,7 @@
 ;;     |     +---------------+-------------+   |
 ;;     +---------------------------------------+
 ;;
-;; Two facts the code depends on:
+;; Three facts the code depends on:
 ;;
 ;; 1. The frame borrows the parent's minibuffer window.  Selecting a window
 ;;    here selects the frame -- which is how consult's preview reaches the pane
@@ -25,6 +25,10 @@
 ;;
 ;; 2. The pane cannot be `minibuffer-selected-window', so `aperture-consult.el'
 ;;    redirects `consult--original-window' instead.
+;;
+;; 3. The parent stays the selected frame for the whole session, so anything
+;;    that pops up against the selected frame opens underneath this one.
+;;    which-key is redirected here; see the which-key section below.
 ;;
 ;; aperture owns this frame; it is not vertico-posframe integration.  See
 ;; `aperture-vertico.el' for how it stands down for that package.
@@ -74,6 +78,18 @@ Zero for no border."
 Appended last, so anything here overrides aperture's own choices.  Use it
 for fonts, fringes, `alpha' and the like."
   :type '(alist :key-type symbol :value-type sexp)
+  :group 'aperture)
+
+(defcustom aperture-child-frame-which-key t
+  "When non-nil, show the which-key popup inside the aperture child frame.
+
+The popup is a side window on the selected frame, and during a session
+that is the parent, so it would open underneath the child frame.  With
+this on it opens as a strip along the bottom of the child frame instead,
+sized against that frame.  Applies when `which-key-popup-type' is
+`side-window'\=' or `custom'\=' (as Doom Emacs sets it); the `frame'\=' and
+`minibuffer'\=' types are left alone."
+  :type 'boolean
   :group 'aperture)
 
 ;;;; Geometry
@@ -186,12 +202,70 @@ The parent frame is never touched, so there is no configuration to save."
           (aperture--log "layout child-frame pane=%s | list=%s"
                          (aperture--log-window (aperture--session-pane session))
                          (aperture--log-window (aperture--session-list-win session)))
+          (aperture-child-frame-install)
           t)
       (error
        (aperture--log "layout child frame failed: %S" err)
        (message "aperture: child frame failed, disabling for this session: %S" err)
        (aperture--restore session)
        nil))))
+
+;;;; which-key
+
+(defvar which-key-popup-type)
+
+(defun aperture-child-frame--which-key-loaded-p ()
+  "Non-nil if which-key is loaded with the functions advised here.
+Tested by name rather than by `featurep', so a which-key that renames
+these internals is left alone instead of being half-advised."
+  (and (fboundp 'which-key--create-buffer-and-show)
+       (fboundp 'which-key--show-page)))
+
+(defconst aperture-child-frame--which-key-functions
+  '(which-key--create-buffer-and-show which-key--show-page)
+  "The which-key functions that size or show the popup.
+The first covers a fresh popup, sizing included; the second is called
+directly by the paging commands.  Hiding needs neither:
+`quit-windows-on' already searches every frame.")
+
+(defun aperture-child-frame--which-key-frame ()
+  "Return the child frame the which-key popup should open in, or nil."
+  (when-let* (((and aperture-child-frame-which-key
+                    (memq (bound-and-true-p which-key-popup-type)
+                          '(side-window custom))))
+              (session (aperture--active-session))
+              (frame (aperture--session-frame session))
+              ((frame-live-p frame)))
+    frame))
+
+(defun aperture-child-frame--which-key-in-frame (fn &rest args)
+  "Around advice for which-key's popup functions, calling FN with ARGS.
+
+Selects the child frame for the call, since which-key both sizes and
+places its side window against the selected frame.  `current-buffer' is
+held on purpose: selecting a frame moves it to that frame's window, and
+which-key reads the bindings to show from the current buffer's keymaps.
+Other sessions, and other popup types, call through unchanged."
+  (if-let* ((frame (aperture-child-frame--which-key-frame)))
+      (let ((buffer (current-buffer)))
+        (aperture--log "which-key %s in child frame" fn)
+        (with-selected-frame frame
+          (with-current-buffer buffer
+            (apply fn args))))
+    (apply fn args)))
+
+(defun aperture-child-frame-install ()
+  "Install the which-key adaptation if which-key has been loaded.
+Polled from each child-frame session, as `aperture--consult-arrange' is,
+so a which-key loaded after `aperture-mode' is still caught."
+  (when (aperture-child-frame--which-key-loaded-p)
+    (dolist (fn aperture-child-frame--which-key-functions)
+      (advice-add fn :around #'aperture-child-frame--which-key-in-frame))))
+
+(defun aperture-child-frame-uninstall ()
+  "Remove the which-key adaptation."
+  (dolist (fn aperture-child-frame--which-key-functions)
+    (advice-remove fn #'aperture-child-frame--which-key-in-frame)))
 
 (provide 'aperture-child-frame)
 ;;; aperture-child-frame.el ends here

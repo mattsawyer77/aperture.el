@@ -52,6 +52,14 @@ Confirmed on emacs-mac 30.2.50 / macOS, and owed again on any other platform:
 7. **With `vertico-posframe-mode` on**, an aperture session must show aperture's frame and
    every other minibuffer must be untouched. Not yet exercised: vertico-posframe is not
    installed in the `emacs -Q` used for the checks.
+8. **The which-key popup opens inside the child frame**, along its bottom edge, on a
+   prefix key typed in the minibuffer (`C-c` with embark's minibuffer bindings is the field
+   report). It must list the *minibuffer's* bindings, not the pane buffer's — try
+   `aperture-side` `left` too, where the pane is the frame's first window. Paging (`C-h n`)
+   stays in the child frame; the list and pane get their height back when it closes;
+   typing carries on in the minibuffer; with `aperture-child-frame-which-key` nil it is
+   back on the parent. Owed for both `which-key-popup-type` `side-window` (stock) and
+   `custom` (Doom Emacs).
 
 ## Manual checks owed
 
@@ -124,6 +132,11 @@ Each of these cost real debugging time. None of them announce themselves when vi
    mid-`vertico--setup` and `current-buffer` leaves the minibuffer: vertico's locals and the
    session land in the wrong buffer and the frame is never deleted. emacs-mac does not load
    ns-win.el, so it cannot catch a regression here; check on NS.
+13. **Anything run under `with-selected-frame` on the child frame must hold
+   `current-buffer`** (§3.4b). Selecting a frame makes its selected window's buffer current,
+   which during a session is the list or the pane, not the minibuffer. The which-key
+   adaptation depends on this: which-key reads the bindings it shows from the current
+   buffer's keymaps, so losing it shows the wrong keys with no error.
 
 ## Diagnosing anything below
 

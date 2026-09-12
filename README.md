@@ -132,7 +132,8 @@ preview pane — in a child frame, leaving any pre-existing windows visible behi
       aperture-child-frame-height 0.6       ; fraction of the parent, or lines
       aperture-child-frame-position 'center ; or 'top, or (X . Y), or a function
       aperture-child-frame-border-width 1
-      aperture-child-frame-parameters nil)  ; frame parameters, applied last
+      aperture-child-frame-parameters nil   ; frame parameters, applied last
+      aperture-child-frame-which-key t)     ; which-key popup inside the frame
 ```
 
 Needs a graphical Emacs; on a TTY it falls back to the window layout and says so in the
@@ -141,6 +142,12 @@ frame. `aperture-height`, `aperture-min-top-height` and `aperture-min-pane-width
 apply: there is no top window, and the frame's size is set directly by
 `aperture-child-frame-width` rather than inherited from a layout you did not choose. A pane
 that still comes out narrow is logged, naming the knob to turn.
+
+The [which-key](https://github.com/justbur/emacs-which-key) popup for a prefix key typed in
+the minibuffer opens along the bottom of the child frame, rather than on the parent where
+the frame would cover it. Set `aperture-child-frame-which-key` to `nil` to leave it on the
+parent. It applies to which-key's `side-window` popup type and to `custom`, which Doom Emacs
+uses; the `frame` and `minibuffer` types are left alone.
 
 This is not `vertico-posframe` integration. `aperture` creates and splits its own child
 frame. If you use `vertico-posframe-mode`, `aperture` stands down for it per-session and
