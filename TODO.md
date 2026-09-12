@@ -119,6 +119,11 @@ Each of these cost real debugging time. None of them announce themselves when vi
    reports; do not assume a category exists because marginalia annotates the command, since
    marginalia may be *inferring* it. And check the reverse too: if consult drives preview
    for that category, the entry belongs in `aperture-consult-categories`, not the registry.
+12. **The child frame is made with `after-make-frame-functions` bound to nil** (§3.4b). NS
+   Emacs's term/ns-win.el puts `select-frame` there, so otherwise the child frame is selected
+   mid-`vertico--setup` and `current-buffer` leaves the minibuffer: vertico's locals and the
+   session land in the wrong buffer and the frame is never deleted. emacs-mac does not load
+   ns-win.el, so it cannot catch a regression here; check on NS.
 
 ## Diagnosing anything below
 
