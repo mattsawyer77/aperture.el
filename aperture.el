@@ -3,7 +3,7 @@
 ;; Copyright (C) 2026 Matt Sawyer
 
 ;; Author: Matt Sawyer
-;; Version: 0.3.1
+;; Version: 0.3.2
 ;; Package-Requires: ((emacs "29.1") (vertico "1.7"))
 ;; Keywords: convenience, matching
 ;; URL: https://github.com/mattsawyer77/aperture.el
