@@ -131,10 +131,16 @@ preview pane — in a child frame, leaving any pre-existing windows visible behi
       aperture-child-frame-width 0.8        ; fraction of the parent, or columns
       aperture-child-frame-height 0.6       ; fraction of the parent, or lines
       aperture-child-frame-position 'center ; or 'top, or (X . Y), or a function
-      aperture-child-frame-border-width 1
+      aperture-child-frame-border-width 8
+      aperture-child-frame-background 'auto ; or a color, or nil for the parent's
+      aperture-child-frame-background-blend 0.06
       aperture-child-frame-parameters nil   ; frame parameters, applied last
       aperture-child-frame-which-key t)     ; which-key popup inside the frame
 ```
+
+With `auto`, the frame and its border are a shade lighter than the parent on a dark theme
+and darker on a light one. Fringe and border faces styled with a color of their own are
+left alone.
 
 Needs a graphical Emacs; on a TTY it falls back to the window layout and says so in the
 log. `aperture-side` and `aperture-width` work as usual, positioning the pane inside the

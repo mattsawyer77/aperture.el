@@ -397,6 +397,12 @@ roughly 100 columns, and pinned the frame to full width under 80 — a safety ne
 a direct request, which is the same silent-no-op failure §7.1 exists to catch. It now only
 logs a too-narrow pane, naming the knob to raise.
 
+**The frame's background is a shade off the parent's** (`aperture-child-frame-background`,
+default `auto`): the parent's foreground blended 6% into its background, which lightens a
+dark theme and darkens a light one without testing which it is. The fringe and border faces
+follow only where they wear the parent's background, so styling of their own is kept. The
+8px border comes out of the geometry's size, since `set-frame-size` sizes the text area.
+
 **Costs, permanent:**
 
 - **No CI coverage, ever.** Only the geometry is reachable in batch; the layout, the
@@ -831,6 +837,8 @@ aperture-child-frame-width             ; parent fraction, or columns
 aperture-child-frame-height            ; parent fraction, or lines
 aperture-child-frame-position          ; 'center | 'top | (X . Y) | function
 aperture-child-frame-border-width      ; 0 for none
+aperture-child-frame-background        ; 'auto (default) | color | nil
+aperture-child-frame-background-blend  ; 0.06 (default)
 aperture-child-frame-parameters        ; extra frame parameters, applied last
 aperture-child-frame-which-key         ; t (default): which-key popup inside the frame
 ```
