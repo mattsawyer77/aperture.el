@@ -60,6 +60,10 @@ Confirmed on emacs-mac 30.2.50 / macOS, and owed again on any other platform:
    typing carries on in the minibuffer; with `aperture-child-frame-which-key` nil it is
    back on the parent. Owed for both `which-key-popup-type` `side-window` (stock) and
    `custom` (Doom Emacs).
+9. **The frame's background and border are a shade off the parent's**: lighter under
+   `modus-vivendi`, darker under `modus-operandi`, with no flash on opening and no stripes
+   in the fringes. A `child-frame-border` given its own color keeps it. The frame's outer
+   size matches `aperture-child-frame-width` with the border at 8 and at 0.
 
 ## Manual checks owed
 

@@ -67,10 +67,25 @@ pixel width and height, and must return such a cons."
                  (function :tag "Function of (parent width height)"))
   :group 'aperture)
 
-(defcustom aperture-child-frame-border-width 1
+(defcustom aperture-child-frame-border-width 8
   "Border width, in pixels, of the aperture child frame.
-Zero for no border."
+Drawn in the frame's background color.  Zero for no border."
   :type 'natnum
+  :group 'aperture)
+
+(defcustom aperture-child-frame-background 'auto
+  "Background color of the aperture child frame.
+`auto'\\=' blends `aperture-child-frame-background-blend' of the parent's
+foreground into its background: a shade lighter on a dark theme, darker
+on a light one.  A color string is used as given; nil keeps the parent's."
+  :type '(choice (const :tag "Derived from the theme" auto)
+                 (const :tag "Same as the parent" nil)
+                 (color :tag "Color"))
+  :group 'aperture)
+
+(defcustom aperture-child-frame-background-blend 0.06
+  "How far an `auto'\\=' background moves towards the foreground, 0.0 to 1.0."
+  :type 'float
   :group 'aperture)
 
 (defcustom aperture-child-frame-parameters nil
@@ -119,11 +134,52 @@ sized against that frame.  Applies when `which-key-popup-type' is
                    (_ (cons (/ (- pw w) 2) (/ (- ph h) 2))))))
       (list (max 0 x) (max 0 y) w h))))
 
+;;;; Background
+
+(defun aperture-child-frame--blend (from to ratio)
+  "Return the hex color RATIO of the way from FROM to TO.
+FROM and TO are lists of 16-bit RGB values, as `color-values' returns."
+  (apply #'format "#%02x%02x%02x"
+         (cl-mapcar (lambda (a b) (round (/ (+ a (* ratio (- b a))) 257.0)))
+                    from to)))
+
+(defun aperture-child-frame--background (parent)
+  "Return the child frame's background color over PARENT, or nil for the parent's."
+  (pcase aperture-child-frame-background
+    ((and (pred stringp) color) color)
+    ('auto
+     (when-let* ((bg (face-background 'default parent))
+                 (fg (face-foreground 'default parent))
+                 (bg-rgb (color-values bg parent))
+                 (fg-rgb (color-values fg parent)))
+       (aperture-child-frame--blend bg-rgb fg-rgb
+                                    aperture-child-frame-background-blend)))))
+
+(defconst aperture-child-frame--background-faces
+  '(fringe child-frame-border internal-border)
+  "Faces that take the child frame's background if they wear the parent's.")
+
+(defun aperture-child-frame--apply-background (frame parent color)
+  "Give FRAME, made over PARENT, the background COLOR.
+Each of `aperture-child-frame--background-faces' follows only if its
+background on PARENT is PARENT's own, so a face styled with a color of
+its own is never overridden."
+  (set-face-background 'default color frame)
+  (when-let* ((bg-name (face-background 'default parent))
+              (bg (color-values bg-name parent)))
+    (dolist (face aperture-child-frame--background-faces)
+      (when-let* ((own (face-background face parent)))
+        (when (equal (color-values own parent) bg)
+          (set-face-background face color frame))))))
+
 ;;;; The frame
 
 (defun aperture-child-frame--make (parent)
   "Create and show the aperture child frame over PARENT."
   (pcase-let* ((`(,x ,y ,w ,h) (aperture-child-frame--geometry parent))
+               (background (or (alist-get 'background-color
+                                          aperture-child-frame-parameters)
+                               (aperture-child-frame--background parent)))
                (frame-resize-pixelwise t)
                ;; Load-bearing.  The minibuffer window must stay selected, and
                ;; its buffer current, for the rest of `vertico--setup'.  On NS,
@@ -138,6 +194,7 @@ sized against that frame.  Applies when `which-key-popup-type' is
                 (make-frame
                  (append
                   aperture-child-frame-parameters
+                  (when background `((background-color . ,background)))
                   `((parent-frame . ,parent)
                     ;; Load-bearing; see the Commentary.
                     (minibuffer . ,(minibuffer-window parent))
@@ -157,7 +214,13 @@ sized against that frame.  Applies when `which-key-popup-type' is
                     ;; Created hidden and shown once it is sized and placed, so
                     ;; the frame never appears at the wrong size first.
                     (visibility . nil))))))
-    (set-frame-size frame w h t)
+    (when background
+      (aperture-child-frame--apply-background frame parent background))
+    ;; `set-frame-size' sizes the text area; take the border and fringes off.
+    (set-frame-size frame
+                    (max 1 (- w (- (frame-native-width frame) (frame-text-width frame))))
+                    (max 1 (- h (- (frame-native-height frame) (frame-text-height frame))))
+                    t)
     (set-frame-position frame x y)
     (make-frame-visible frame)
     (aperture--log "frame  %dx%d px at (%d,%d) over %dx%d"
